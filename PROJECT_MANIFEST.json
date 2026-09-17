@@ -1,0 +1,13 @@
+{
+  "project": "WakeWay",
+  "package": "com.wakeway.app",
+  "version": "0.1.0",
+  "android_target": 36,
+  "files": 58,
+  "notes": [
+    "Core destination alarm is device-local.",
+    "Third-party secret keys belong in Cloudflare Worker secrets, not Android.",
+    "Public OSM tile infrastructure is not an unlimited free production CDN.",
+    "The Google Play full-distribution account still has its own registration requirements."
+  ]
+}

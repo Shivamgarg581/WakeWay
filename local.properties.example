@@ -1,0 +1,8 @@
+# Copy this file to local.properties on your development computer.
+# Keep real values OUT of Git.
+#
+# These are the public client values used by the app.
+# Secret server-side keys belong in Cloudflare Worker secrets instead.
+WAKEWAY_BACKEND_URL=https://YOUR-WORKER.workers.dev
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
