@@ -24,13 +24,15 @@ jobs:
           cache: gradle
 
       - name: Configure Android runtime settings
+        env:
+          WAKEWAY_BACKEND_URL: ${{ secrets.WAKEWAY_BACKEND_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         shell: bash
         run: |
-          {
-            echo "WAKEWAY_BACKEND_URL=\${{ secrets.WAKEWAY_BACKEND_URL }}"
-            echo "SUPABASE_URL=\${{ secrets.SUPABASE_URL }}"
-            echo "SUPABASE_PUBLISHABLE_KEY=\${{ secrets.SUPABASE_PUBLISHABLE_KEY }}"
-          } > local.properties
+          printf 'WAKEWAY_BACKEND_URL=%s\n' "$WAKEWAY_BACKEND_URL" > local.properties
+          printf 'SUPABASE_URL=%s\n' "$SUPABASE_URL" >> local.properties
+          printf 'SUPABASE_PUBLISHABLE_KEY=%s\n' "$SUPABASE_PUBLISHABLE_KEY" >> local.properties
 
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
