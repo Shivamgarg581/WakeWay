@@ -22,9 +22,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        buildConfigField("String", "BACKEND_URL", "\"" + "$" + "{localProps.getProperty("WAKEWAY_BACKEND_URL", "").replace("\"", "\\\"")}\"")
-        buildConfigField("String", "SUPABASE_URL", "\"" + "$" + "{localProps.getProperty("SUPABASE_URL", "").replace("\"", "\\\"")}\"")
-        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"" + "$" + "{localProps.getProperty("SUPABASE_PUBLISHABLE_KEY", "").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "BACKEND_URL", "\"" + localProps.getProperty("WAKEWAY_BACKEND_URL", "") + "\"")
+        buildConfigField("String", "SUPABASE_URL", "\"" + localProps.getProperty("SUPABASE_URL", "") + "\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"" + localProps.getProperty("SUPABASE_PUBLISHABLE_KEY", "") + "\"")
     }
 
     buildFeatures {
