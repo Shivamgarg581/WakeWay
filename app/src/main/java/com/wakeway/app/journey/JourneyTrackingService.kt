@@ -10,25 +10,32 @@ import android.speech.tts.TextToSpeech
 import com.wakeway.app.R
 import com.wakeway.app.data.LocalStore
 import com.wakeway.app.model.AlertTrigger
+import com.wakeway.app.model.Journey
 import com.wakeway.app.model.JourneyStatus
+import com.wakeway.app.network.ApiClient
+import org.json.JSONObject
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.max
 
 class JourneyTrackingService : Service(), LocationListener {
 
     private lateinit var locationManager: LocationManager
     private lateinit var store: LocalStore
+    private lateinit var api: ApiClient
     private var tts: TextToSpeech? = null
     private val firedDistanceAlerts = mutableSetOf<String>()
-    private var lastGoodLocation: Location? = null
+    private val cloudExecutor = Executors.newSingleThreadExecutor()
+    private var lastCloudLocationSync = 0L
     private var finalAlarmed = false
 
     override fun onCreate() {
         super.onCreate()
         store = LocalStore(this)
+        api = ApiClient(this)
         locationManager = getSystemService(LocationManager::class.java)
         tts = TextToSpeech(this) {
-            tts?.language = Locale.getDefault()
+            runCatching { tts?.language = Locale.getDefault() }
         }
         createChannel()
     }
@@ -45,9 +52,19 @@ class JourneyTrackingService : Service(), LocationListener {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification("Monitoring ${journey.destination.name}"))
+        startForeground(NOTIFICATION_ID, buildNotification("Monitoring " + journey.destination.name))
+        syncJourney(journey)
 
         try {
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                alert("WakeWay needs location permission to monitor your journey.")
+                return START_STICKY
+            }
+
             locationManager.requestLocationUpdates(
                 LocationManager.GPS_PROVIDER,
                 5_000L,
@@ -55,6 +72,7 @@ class JourneyTrackingService : Service(), LocationListener {
                 this,
                 Looper.getMainLooper()
             )
+
             runCatching {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
@@ -65,13 +83,12 @@ class JourneyTrackingService : Service(), LocationListener {
                 )
             }
 
-            // Use a recent on-device location immediately when available.
             runCatching {
                 val last = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                     ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
                 last?.let(::onLocationChanged)
             }
-        } catch (_: SecurityException) {
+        } catch (security: SecurityException) {
             alert("WakeWay needs location permission to monitor your journey.")
         }
 
@@ -85,7 +102,6 @@ class JourneyTrackingService : Service(), LocationListener {
             return
         }
 
-        lastGoodLocation = location
         val distance = Distance.meters(
             location.latitude,
             location.longitude,
@@ -94,8 +110,9 @@ class JourneyTrackingService : Service(), LocationListener {
         )
 
         updateNotification(
-            "${formatDistance(distance)} • accuracy ±${location.accuracy.toInt()}m"
+            formatDistance(distance) + " • accuracy ±" + location.accuracy.toInt() + "m"
         )
+        syncLocation(journey, location)
 
         val distanceAlerts = journey.alerts
             .filter { it.trigger == AlertTrigger.DISTANCE }
@@ -103,15 +120,16 @@ class JourneyTrackingService : Service(), LocationListener {
 
         for (alertRule in distanceAlerts) {
             val meters = alertRule.value * 1000.0
-            val key = "${alertRule.value}:${alertRule.label}"
+            val key = alertRule.value.toString() + ":" + alertRule.label
             if (distance <= meters && firedDistanceAlerts.add(key)) {
-                val text = when {
-                    meters >= 1000.0 ->
-                        "Wake up. ${journey.destination.name} is about ${trim(meters / 1000.0)} kilometres away."
-                    else ->
-                        "Wake up. ${journey.destination.name} is about ${trim(meters)} metres away."
+                val message = if (meters >= 1000.0) {
+                    "Wake up. " + journey.destination.name + " is about " +
+                        trim(meters / 1000.0) + " kilometres away."
+                } else {
+                    "Wake up. " + journey.destination.name + " is about " +
+                        trim(meters) + " metres away."
                 }
-                alert(text)
+                alert(message)
             }
         }
 
@@ -122,16 +140,61 @@ class JourneyTrackingService : Service(), LocationListener {
 
         if (!finalAlarmed && distance <= max(destinationRadius, 75.0)) {
             finalAlarmed = true
-            alert(
-                "Wake up. You have reached ${journey.destination.name}. Please get ready to exit."
-            )
+            alert("Wake up. You have reached " + journey.destination.name + ". Please get ready to exit.")
+
             val completed = journey.copy(
                 status = JourneyStatus.COMPLETED,
                 acknowledged = false
             )
             store.addHistory(completed)
+            syncJourney(completed)
+            if (store.setting("history", "true") != "true") {
+                // Keep only the active-state transition when history is disabled.
+            }
             store.clearActiveJourney()
+            cloudExecutor.execute {
+                runCatching { api.endJourney(journey.id, "completed", store.accessToken()) }
+            }
             Handler(Looper.getMainLooper()).postDelayed({ stopSelf() }, 12_000)
+        }
+    }
+
+    private fun syncJourney(journey: Journey) {
+        val token = store.accessToken() ?: return
+        if (!api.isConfigured()) return
+
+        val body = JSONObject().apply {
+            put("id", journey.id)
+            put("destination_name", journey.destination.name)
+            put("destination_address", journey.destination.address)
+            put("destination_lat", journey.destination.latitude)
+            put("destination_lon", journey.destination.longitude)
+            put("transport_mode", journey.transport.name)
+            put("started_at", java.time.Instant.ofEpochMilli(journey.startedAt).toString())
+            put("status", journey.status.name.lowercase())
+        }
+
+        cloudExecutor.execute {
+            runCatching { api.sendJourney(body, token) }
+        }
+    }
+
+    private fun syncLocation(journey: Journey, location: Location) {
+        if (store.setting("auto_share", "false") != "true") return
+        val token = store.accessToken() ?: return
+        if (!api.isConfigured()) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastCloudLocationSync < 30_000L) return
+        lastCloudLocationSync = now
+
+        val body = JSONObject()
+            .put("latitude", location.latitude)
+            .put("longitude", location.longitude)
+            .put("accuracy_m", location.accuracy)
+
+        cloudExecutor.execute {
+            runCatching { api.family("location", body, token) }
         }
     }
 
@@ -139,10 +202,9 @@ class JourneyTrackingService : Service(), LocationListener {
         if (value % 1.0 == 0.0) value.toInt().toString()
         else String.format(Locale.US, "%.1f", value)
 
-    private fun formatDistance(meters: Double): String = when {
-        meters < 1000 -> "${meters.toInt()} m to destination"
-        else -> "${String.format(Locale.US, "%.2f", meters / 1000.0)} km to destination"
-    }
+    private fun formatDistance(meters: Double): String =
+        if (meters < 1000) "${meters.toInt()} m to destination"
+        else String.format(Locale.US, "%.2f km to destination", meters / 1000.0)
 
     private fun alert(message: String) {
         val notifications = getSystemService(NotificationManager::class.java)
@@ -216,7 +278,12 @@ class JourneyTrackingService : Service(), LocationListener {
     private fun stopJourney() {
         runCatching { locationManager.removeUpdates(this) }
         store.activeJourney()?.let {
-            store.addHistory(it.copy(status = JourneyStatus.CANCELLED))
+            val cancelled = it.copy(status = JourneyStatus.CANCELLED)
+            store.addHistory(cancelled)
+            syncJourney(cancelled)
+            cloudExecutor.execute {
+                runCatching { api.endJourney(it.id, "cancelled", store.accessToken()) }
+            }
         }
         store.clearActiveJourney()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -231,6 +298,7 @@ class JourneyTrackingService : Service(), LocationListener {
 
     override fun onDestroy() {
         runCatching { locationManager.removeUpdates(this) }
+        cloudExecutor.shutdownNow()
         tts?.shutdown()
         super.onDestroy()
     }

@@ -7,51 +7,139 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import androidx.activity.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import com.wakeway.app.data.LocalStore
 import com.wakeway.app.journey.JourneyTrackingService
-import com.wakeway.app.model.*
+import com.wakeway.app.model.AlertTrigger
+import com.wakeway.app.model.Destination
+import com.wakeway.app.model.Journey
+import com.wakeway.app.model.JourneyAlert
+import com.wakeway.app.model.JourneyStatus
+import com.wakeway.app.model.TransportMode
 import com.wakeway.app.network.ApiClient
 import com.wakeway.app.ui.WakeWayTheme
+import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 
-enum class Screen { HOME, SETUP, ACTIVE, HISTORY, SETTINGS, FAMILY, CHAT, SOCIAL, AI, WEATHER, TRAIN, ACCOUNT, PREMIUM, MAP }
+private enum class Screen {
+    HOME, SETUP, ACTIVE, HISTORY, EXPLORE, TRAIN, WEATHER, AI, FAMILY, FRIENDS, CHAT, ACCOUNT, SETTINGS, PREMIUM, MAP
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { WakeWayTheme { WakeWayApp() } }
+        setContent {
+            WakeWayTheme {
+                WakeWayApp()
+            }
+        }
     }
 }
 
 @Composable
-fun WakeWayApp() {
+private fun WakeWayApp() {
     val context = LocalContext.current
-    val activity = context as Activity
     val store = remember { LocalStore(context) }
-    val api = remember { ApiClient() }
+    val api = remember { ApiClient(context) }
+    val executor = remember { Executors.newCachedThreadPool() }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+
     var screen by remember { mutableStateOf(Screen.HOME) }
     var journey by remember { mutableStateOf(store.activeJourney()) }
     var selectedDestination by remember { mutableStateOf<Destination?>(null) }
     var selectedTransport by remember { mutableStateOf(TransportMode.TRAIN) }
+    var backendOnline by remember { mutableStateOf(false) }
+    var backendMessage by remember { mutableStateOf("Checking services…") }
+    var darkMode by remember { mutableStateOf(store.setting("dark", "false") == "true") }
+
+    LaunchedEffect(api.backendUrl()) {
+        executor.execute {
+            val response = api.health()
+            mainHandler.post {
+                backendOnline = response.optBoolean("ok", false)
+                backendMessage = when {
+                    backendOnline -> "Backend connected"
+                    api.backendUrl().isBlank() -> "Local-first mode"
+                    else -> response.optString("error", "Backend unavailable")
+                }
+            }
+        }
+    }
+
+    fun open(newScreen: Screen) {
+        screen = newScreen
+    }
+
+    BackHandler(enabled = screen != Screen.HOME) {
+        screen = Screen.HOME
+    }
 
     val locationPermissions = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -61,89 +149,206 @@ fun WakeWayApp() {
 
     var pendingJourney by remember { mutableStateOf<Journey?>(null) }
 
-    fun launchJourneyService(j: Journey) {
+    fun startService(j: Journey) {
         store.saveJourney(j)
         journey = j
+        executor.execute {
+            val token = store.accessToken()
+            val body = JSONObject().apply {
+                put("id", j.id)
+                put("destination_name", j.destination.name)
+                put("destination_address", j.destination.address)
+                put("destination_lat", j.destination.latitude)
+                put("destination_lon", j.destination.longitude)
+                put("transport_mode", j.transport.name)
+                put("started_at", java.time.Instant.ofEpochMilli(j.startedAt).toString())
+                put("status", "active")
+            }
+            if (!token.isNullOrBlank() && api.isConfigured()) {
+                api.sendJourney(body, token)
+            }
+        }
         val intent = Intent(context, JourneyTrackingService::class.java)
-        if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+        if (Build.VERSION.SDK_INT >= 26) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
         screen = Screen.ACTIVE
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        val requiredGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+        val locationGranted =
+            result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        val notificationsGranted = Build.VERSION.SDK_INT < 33 || result[Manifest.permission.POST_NOTIFICATIONS] == true
+        val notificationGranted =
+            Build.VERSION.SDK_INT < 33 ||
+            result[Manifest.permission.POST_NOTIFICATIONS] == true
+
         val pending = pendingJourney
         pendingJourney = null
-        if (requiredGranted && notificationsGranted && pending != null) {
-            launchJourneyService(pending)
+
+        if (locationGranted && notificationGranted && pending != null) {
+            startService(pending)
         }
     }
 
-    fun startJourney(j: Journey) {
+    fun beginJourney(j: Journey) {
         val missing = locationPermissions.filter {
-            context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) {
+        if (missing.isEmpty()) {
+            startService(j)
+        } else {
             pendingJourney = j
             permissionLauncher.launch(missing.toTypedArray())
-        } else {
-            launchJourneyService(j)
         }
     }
 
     Scaffold(
+        topBar = {
+            if (screen != Screen.HOME) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { screen = Screen.HOME }) {
+                        Text("←", fontSize = 28.sp)
+                    }
+                    Text(
+                        when (screen) {
+                            Screen.SETUP -> "Set a destination"
+                            Screen.ACTIVE -> "Journey in progress"
+                            Screen.HISTORY -> "Journey history"
+                            Screen.EXPLORE -> "Travel tools"
+                            Screen.TRAIN -> "Live trains"
+                            Screen.WEATHER -> "Weather"
+                            Screen.AI -> "WakeWay AI"
+                            Screen.FAMILY -> "Family"
+                            Screen.FRIENDS -> "Friends"
+                            Screen.CHAT -> "Chat"
+                            Screen.ACCOUNT -> "Account"
+                            Screen.SETTINGS -> "Settings"
+                            Screen.PREMIUM -> "Premium"
+                            Screen.MAP -> "Map"
+                            else -> "WakeWay"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    )
+                }
+            }
+        },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(screen == Screen.HOME, { screen = Screen.HOME }, label = { Text("Home") }, icon = { Text("⌂") })
-                NavigationBarItem(screen == Screen.ACTIVE, { screen = Screen.ACTIVE }, label = { Text("Journey") }, icon = { Text("🧭") })
-                NavigationBarItem(screen == Screen.HISTORY, { screen = Screen.HISTORY }, label = { Text("History") }, icon = { Text("◷") })
-                NavigationBarItem(screen == Screen.SETTINGS, { screen = Screen.SETTINGS }, label = { Text("Settings") }, icon = { Text("⚙") })
+                NavigationBarItem(
+                    selected = screen == Screen.HOME,
+                    onClick = { screen = Screen.HOME },
+                    icon = { Text("⌂", fontSize = 22.sp) },
+                    label = { Text("Home") }
+                )
+                NavigationBarItem(
+                    selected = screen == Screen.ACTIVE || screen == Screen.SETUP,
+                    onClick = { screen = if (journey != null) Screen.ACTIVE else Screen.SETUP },
+                    icon = { Text("🧭", fontSize = 21.sp) },
+                    label = { Text("Journey") }
+                )
+                NavigationBarItem(
+                    selected = screen == Screen.HISTORY,
+                    onClick = { screen = Screen.HISTORY },
+                    icon = { Text("◷", fontSize = 21.sp) },
+                    label = { Text("History") }
+                )
+                NavigationBarItem(
+                    selected = screen == Screen.EXPLORE,
+                    onClick = { screen = Screen.EXPLORE },
+                    icon = { Text("✦", fontSize = 21.sp) },
+                    label = { Text("Explore") }
+                )
+                NavigationBarItem(
+                    selected = screen == Screen.SETTINGS,
+                    onClick = { screen = Screen.SETTINGS },
+                    icon = { Text("⚙", fontSize = 21.sp) },
+                    label = { Text("Settings") }
+                )
             }
         }
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
             when (screen) {
                 Screen.HOME -> HomeScreen(
                     journey = journey,
+                    backendOnline = backendOnline,
+                    backendMessage = backendMessage,
                     onStart = { screen = Screen.SETUP },
-                    onDestination = { selectedDestination = it; screen = Screen.SETUP },
-                    onOpen = { screen = it }
+                    onActive = { screen = Screen.ACTIVE },
+                    onOpen = ::open
                 )
-                Screen.SETUP -> JourneySetupScreen(
+
+                Screen.SETUP -> SetupScreen(
                     initialDestination = selectedDestination,
                     initialTransport = selectedTransport,
-                    onBack = { screen = Screen.HOME },
-                    onStart = { d, t, alerts -> startJourney(LocalStore.newJourney(d, t, alerts)) },
-                    onOpenMap = { screen = Screen.MAP },
-                    onSelectedTransport = { selectedTransport = it }
+                    api = api,
+                    store = store,
+                    onDestination = { selectedDestination = it },
+                    onTransport = { selectedTransport = it },
+                    onMap = { screen = Screen.MAP },
+                    onStart = { destination, transport, alerts ->
+                        beginJourney(LocalStore.newJourney(destination, transport, alerts))
+                    }
                 )
-                Screen.ACTIVE -> ActiveJourneyScreen(
+
+                Screen.ACTIVE -> ActiveScreen(
                     journey = journey,
                     onEnd = {
-                        val svc = Intent(context, JourneyTrackingService::class.java).apply {
+                        val stop = Intent(context, JourneyTrackingService::class.java).apply {
                             action = JourneyTrackingService.ACTION_STOP
                         }
-                        context.startService(svc)
-                        journey = store.activeJourney()
+                        context.startService(stop)
+                        journey = null
                         screen = Screen.HOME
                     },
                     onFamily = { screen = Screen.FAMILY },
                     onChat = { screen = Screen.CHAT }
                 )
+
                 Screen.HISTORY -> HistoryScreen(store.history())
-                Screen.SETTINGS -> SettingsScreen(store, onBack = { screen = Screen.HOME }, onAccount = { screen = Screen.ACCOUNT })
-                Screen.FAMILY -> FamilyScreen(api)
-                Screen.CHAT -> ChatScreen(api)
-                Screen.SOCIAL -> SocialScreen(api)
-                Screen.AI -> AiScreen(api)
-                Screen.WEATHER -> WeatherScreen(api)
+
+                Screen.EXPLORE -> ExploreScreen(
+                    backendOnline = backendOnline,
+                    onOpen = ::open
+                )
+
                 Screen.TRAIN -> TrainScreen(api)
-                Screen.ACCOUNT -> AccountScreen(api)
-                Screen.PREMIUM -> PremiumScreen()
-                Screen.MAP -> MapScreen(destination = selectedDestination)
+                Screen.WEATHER -> WeatherScreen(api, selectedDestination)
+                Screen.AI -> AiScreen(api)
+                Screen.FAMILY -> FamilyScreen(api, store)
+                Screen.FRIENDS -> FriendsScreen(api, store)
+                Screen.CHAT -> ChatScreen(api, store)
+
+                Screen.ACCOUNT -> AccountScreen(
+                    api = api,
+                    store = store,
+                    onProfileUpdated = { }
+                )
+
+                Screen.SETTINGS -> SettingsScreen(
+                    api = api,
+                    store = store,
+                    onAccount = { screen = Screen.ACCOUNT }
+                )
+
+                Screen.PREMIUM -> PremiumScreen(api, store)
+                Screen.MAP -> MapScreen(selectedDestination)
             }
         }
     }
@@ -152,369 +357,223 @@ fun WakeWayApp() {
 @Composable
 private fun HomeScreen(
     journey: Journey?,
+    backendOnline: Boolean,
+    backendMessage: String,
     onStart: () -> Unit,
-    onDestination: (Destination) -> Unit,
+    onActive: () -> Unit,
     onOpen: (Screen) -> Unit
 ) {
-    val saved = listOf(
-        Destination("Kota Junction", "Kota, Rajasthan", 25.2138, 75.8648),
-        Destination("Jaipur Junction", "Jaipur, Rajasthan", 26.9196, 75.7878)
-    )
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(20.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Text("Good afternoon 👋", fontSize = 15.sp)
-            Text("WakeWay", fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Text("Sleep. We'll wake you.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Destination alarm, reimagined.",
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "WakeWay",
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "Sleep. We'll wake you.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
+
         item {
-            Button(
-                onClick = onStart,
-                modifier = Modifier.fillMaxWidth().height(58.dp),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Text("START JOURNEY", fontWeight = FontWeight.Bold)
-            }
-        }
-        journey?.let {
-            item {
-                Card(shape = RoundedCornerShape(22.dp)) {
-                    Column(Modifier.padding(18.dp)) {
-                        Text("🔔 Active journey", fontWeight = FontWeight.Bold)
-                        Text("${it.destination.name} • ${it.transport.label}")
-                        Spacer(Modifier.height(8.dp))
-                        Text("Alarm armed")
-                    }
-                }
-            }
-        }
-        item { Text("Quick destinations", fontWeight = FontWeight.Bold, fontSize = 18.sp) }
-        items(saved) { d ->
-            OutlinedButton(
-                onClick = { onDestination(d) },
+            ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text("⭐ ${d.name}", modifier = Modifier.weight(1f))
-                Text("Set")
-            }
-        }
-        item { Text("Tools", fontWeight = FontWeight.Bold, fontSize = 18.sp) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                SmallTool("🚆", "Train") { onOpen(Screen.TRAIN) }
-                SmallTool("☁️", "Weather") { onOpen(Screen.WEATHER) }
-                SmallTool("🤖", "AI") { onOpen(Screen.AI) }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                SmallTool("👨‍👩‍👧", "Family") { onOpen(Screen.FAMILY) }
-                SmallTool("💬", "Chat") { onOpen(Screen.CHAT) }
-                SmallTool("👤", "Account") { onOpen(Screen.ACCOUNT) }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                SmallTool("🌐", "Social") { onOpen(Screen.SOCIAL) }
-                SmallTool("⭐", "Premium") { onOpen(Screen.PREMIUM) }
-                SmallTool("🔔", "Alerts") { onOpen(Screen.SETTINGS) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RowScope.SmallTool(icon: String, label: String, onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = Modifier.weight(1f)) {
-        Column(
-            Modifier.padding(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(icon, fontSize = 25.sp)
-            Spacer(Modifier.height(5.dp))
-            Text(label)
-        }
-    }
-}
-
-@Composable
-private fun JourneySetupScreen(
-    initialDestination: Destination?,
-    initialTransport: TransportMode,
-    onBack: () -> Unit,
-    onStart: (Destination, TransportMode, List<JourneyAlert>) -> Unit,
-    onOpenMap: () -> Unit,
-    onSelectedTransport: (TransportMode) -> Unit
-) {
-    var name by remember { mutableStateOf(initialDestination?.name ?: "") }
-    var address by remember { mutableStateOf(initialDestination?.address ?: "") }
-    var lat by remember { mutableStateOf(initialDestination?.latitude?.toString() ?: "") }
-    var lon by remember { mutableStateOf(initialDestination?.longitude?.toString() ?: "") }
-    var transport by remember { mutableStateOf(initialTransport) }
-    var wakeDistance by remember { mutableStateOf("2") }
-    var finalDistance by remember { mutableStateOf("0.15") }
-    var voice by remember { mutableStateOf(true) }
-
-    LazyColumn(
-        Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("←", fontSize = 28.sp, modifier = Modifier.padding(end = 10.dp))
-                Text("Set destination", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        item {
-            OutlinedTextField(name, { name = it }, label = { Text("Destination name") }, modifier = Modifier.fillMaxWidth())
-        }
-        item {
-            OutlinedTextField(address, { address = it }, label = { Text("Address / station") }, modifier = Modifier.fillMaxWidth())
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(lat, { lat = it }, label = { Text("Latitude") }, modifier = Modifier.weight(1f))
-                OutlinedTextField(lon, { lon = it }, label = { Text("Longitude") }, modifier = Modifier.weight(1f))
-            }
-        }
-        item {
-            OutlinedButton(onClick = onOpenMap, modifier = Modifier.fillMaxWidth()) {
-                Text("📍 Pick destination on map")
-            }
-        }
-        item { Text("Travel mode", fontWeight = FontWeight.Bold) }
-        item {
-            LazyColumn(
-                Modifier.height(170.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(TransportMode.entries.toList()) { mode ->
-                    FilterChip(
-                        selected = mode == transport,
-                        onClick = { transport = mode; onSelectedTransport(mode) },
-                        label = { Text("${mode.emoji} ${mode.label}") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-        item { Text("Wake-up rules", fontWeight = FontWeight.Bold) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    wakeDistance,
-                    { wakeDistance = it },
-                    label = { Text("First alert km") },
-                    modifier = Modifier.weight(1f)
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
-                OutlinedTextField(
-                    finalDistance,
-                    { finalDistance = it },
-                    label = { Text("Final km") },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Voice announcement", Modifier.weight(1f))
-                Switch(voice, { voice = it })
-            }
-        }
-        item {
-            Button(
-                onClick = {
-                    val d = Destination(
-                        name = name.ifBlank { "My destination" },
-                        address = address,
-                        latitude = lat.toDoubleOrNull() ?: 0.0,
-                        longitude = lon.toDoubleOrNull() ?: 0.0
-                    )
-                    onStart(
-                        d,
-                        transport,
-                        listOf(
-                            JourneyAlert(AlertTrigger.DISTANCE, wakeDistance.toDoubleOrNull() ?: 2.0, "${wakeDistance} km warning"),
-                            JourneyAlert(AlertTrigger.DISTANCE, finalDistance.toDoubleOrNull() ?: 0.15, "${finalDistance} km final")
-                        )
-                    )
-                },
-                modifier = Modifier.fillMaxWidth().height(58.dp)
-            ) { Text("🔔 START JOURNEY", fontWeight = FontWeight.Bold) }
-        }
-        item {
-            Text(
-                "For a real trip, confirm the destination coordinates before starting. The alarm engine runs on-device so it can continue when the network disappears.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp
-            )
-        }
-    }
-}
-
-@Composable
-private fun ActiveJourneyScreen(
-    journey: Journey?,
-    onEnd: () -> Unit,
-    onFamily: () -> Unit,
-    onChat: () -> Unit
-) {
-    if (journey == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No active journey")
-        }
-        return
-    }
-    LazyColumn(
-        Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            Text("🧭 ACTIVE JOURNEY", fontWeight = FontWeight.Bold)
-            Text(journey.destination.name, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-            Text("${journey.transport.emoji} ${journey.transport.label}")
-        }
-        item {
-            Card(shape = RoundedCornerShape(24.dp)) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("🔔 Alarm armed", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text("2 km → wake-up warning")
-                    Text("500 m → get ready")
-                    Text("150 m → final alarm")
-                }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onFamily, modifier = Modifier.weight(1f)) { Text("👨‍👩‍👧 Share") }
-                OutlinedButton(onClick = onChat, modifier = Modifier.weight(1f)) { Text("💬 Chat") }
-            }
-        }
-        item {
-            OutlinedButton(onClick = onEnd, modifier = Modifier.fillMaxWidth()) {
-                Text("END JOURNEY")
-            }
-        }
-        item {
-            Text("Keep location enabled and allow background/foreground location operation on your device for reliable tracking.", fontSize = 12.sp)
-        }
-    }
-}
-
-@Composable
-private fun HistoryScreen(history: List<Journey>) {
-    LazyColumn(
-        Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Text("History", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Text("Past journey and alarm results")
-        }
-        if (history.isEmpty()) {
-            item { Text("No journeys yet.") }
-        } else {
-            items(history) { j ->
-                Card(shape = RoundedCornerShape(18.dp)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("${j.transport.emoji} ${j.destination.name}", fontWeight = FontWeight.Bold)
-                        Text(j.destination.address)
-                        Text("Status: ${j.status.name.lowercase().replaceFirstChar { it.uppercase() }}")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsScreen(store: LocalStore, onBack: () -> Unit, onAccount: () -> Unit) {
-    val context = LocalContext.current
-
-    var sleep by remember { mutableStateOf(store.setting("sleep", "true") == "true") }
-    var vibration by remember { mutableStateOf(store.setting("vibration", "true") == "true") }
-    var voice by remember { mutableStateOf(store.setting("voice", "true") == "true") }
-    var announceEta by remember { mutableStateOf(store.setting("announce_eta", "true") == "true") }
-    var repeatFinal by remember { mutableStateOf(store.setting("repeat_final", "true") == "true") }
-    var autoShare by remember { mutableStateOf(store.setting("auto_share", "false") == "true") }
-    var cloudSync by remember { mutableStateOf(store.setting("cloud_sync", "false") == "true") }
-    var ai by remember { mutableStateOf(store.setting("ai", "true") == "true") }
-    var weather by remember { mutableStateOf(store.setting("weather", "true") == "true") }
-    var trains by remember { mutableStateOf(store.setting("trains", "true") == "true") }
-    var history by remember { mutableStateOf(store.setting("history", "true") == "true") }
-    var dark by remember { mutableStateOf(store.setting("dark", "false") == "true") }
-
-    LazyColumn(
-        Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(9.dp)
-    ) {
-        item { Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold) }
-        item { Text("Every important WakeWay control stays in one place.") }
-
-        item { Text("Alarm & sleep", fontWeight = FontWeight.Bold) }
-        item { SettingRow("😴 Sleep Mode", "Stronger progressive alerts while you sleep.", sleep) { sleep = it; store.saveSetting("sleep", it.toString()) } }
-        item { SettingRow("📳 Vibration", "Vibrate on wake-up and final alerts.", vibration) { vibration = it; store.saveSetting("vibration", it.toString()) } }
-        item { SettingRow("🔊 Voice", "Speak the destination alert aloud.", voice) { voice = it; store.saveSetting("voice", it.toString()) } }
-        item { SettingRow("🕐 ETA announcements", "Allow travel progress announcements.", announceEta) { announceEta = it; store.saveSetting("announce_eta", it.toString()) } }
-        item { SettingRow("🔁 Repeat final alarm", "Repeat the final alarm when enabled.", repeatFinal) { repeatFinal = it; store.saveSetting("repeat_final", it.toString()) } }
-
-        item { Text("Journey & sharing", fontWeight = FontWeight.Bold) }
-        item { SettingRow("👨‍👩‍👧 Auto-share journey", "Use your configured family sharing preferences.", autoShare) { autoShare = it; store.saveSetting("auto_share", it.toString()) } }
-        item { SettingRow("☁️ Cloud sync", "Sync journeys and saved places when signed in.", cloudSync) { cloudSync = it; store.saveSetting("cloud_sync", it.toString()) } }
-        item { SettingRow("🗂 Save history", "Keep completed journey results locally.", history) { history = it; store.saveSetting("history", it.toString()) } }
-
-        item { Text("Smart services", fontWeight = FontWeight.Bold) }
-        item { SettingRow("🤖 AI assistant", "Enable AI travel help when configured.", ai) { ai = it; store.saveSetting("ai", it.toString()) } }
-        item { SettingRow("🌦 Weather", "Enable weather-aware journey information.", weather) { weather = it; store.saveSetting("weather", it.toString()) } }
-        item { SettingRow("🚆 Live trains", "Enable live train integration when available.", trains) { trains = it; store.saveSetting("trains", it.toString()) } }
-
-        item { Text("Appearance", fontWeight = FontWeight.Bold) }
-        item { SettingRow("🌙 Dark mode", "Switch the app appearance preference.", dark) { dark = it; store.saveSetting("dark", it.toString()) } }
-
-        item { Text("System access", fontWeight = FontWeight.Bold) }
-        item {
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "DON'T MISS YOUR STOP",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Set it once. Wake up before you arrive.",
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
-                    )
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("🔔 Notification settings") }
-        }
-        item {
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("🔋 Battery optimisation settings") }
-        }
-        item {
-            OutlinedButton(
-                onClick = {
-                    android.widget.Toast.makeText(context, "WakeWay test alert", android.widget.Toast.LENGTH_SHORT).show()
-                    if (vibration) {
-                        context.getSystemService(android.os.Vibrator::class.java)?.vibrate(
-                            android.os.VibrationEffect.createWaveform(longArrayOf(0, 300, 200, 500), -1)
-                        )
+                        Text("🔔", fontSize = 34.sp)
                     }
-            },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("🧪 Test wake-up alert") }
+
+                    Button(
+                        onClick = onStart,
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = RoundedCornerShape(18.dp)
+                    ) {
+                        Text("START A JOURNEY", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
 
-        item { Text("Account & privacy", fontWeight = FontWeight.Bold) }
-        item { OutlinedButton(onClick = onAccount, modifier = Modifier.fillMaxWidth()) { Text("👤 Account / Login") } }
         item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatusPill(
+                    label = if (backendOnline) "Backend online" else backendMessage,
+                    good = backendOnline
+                )
+                StatusPill(
+                    label = if (journey != null) "Journey active" else "Ready",
+                    good = journey != null
+                )
+            }
+        }
+
+        journey?.let { active ->
+            item {
+                ElevatedCard(
+                    onClick = onActive,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp)
+                ) {
+                    Column(Modifier.padding(18.dp)) {
+                        Text(
+                            "ACTIVE JOURNEY",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            active.destination.name,
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(active.transport.emoji + " " + active.transport.label)
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { 0.12f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(5.dp))
+                        Text(
+                            "Monitoring your destination in the foreground.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        item { SectionTitle("Explore WakeWay") }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                FeatureCard("🚆", "Trains", "Live rail status", Modifier.weight(1f)) {
+                    onOpen(Screen.TRAIN)
+                }
+                FeatureCard("🌦", "Weather", "Before you go", Modifier.weight(1f)) {
+                    onOpen(Screen.WEATHER)
+                }
+            }
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                FeatureCard("🤖", "AI", "Travel helper", Modifier.weight(1f)) {
+                    onOpen(Screen.AI)
+                }
+                FeatureCard("👨‍👩‍👧", "Family", "Share safely", Modifier.weight(1f)) {
+                    onOpen(Screen.FAMILY)
+                }
+            }
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                FeatureCard("👥", "Friends", "Requests & activity", Modifier.weight(1f)) {
+                    onOpen(Screen.FRIENDS)
+                }
+                FeatureCard("⭐", "Premium", "Feature-ready", Modifier.weight(1f)) {
+                    onOpen(Screen.PREMIUM)
+                }
+            }
+        }
+
+        item { SectionTitle("Safety promise") }
+
+        item {
+            Card(shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("📍 Local-first alarm", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Core destination monitoring stays on the phone. Cloud services add sync, AI, weather, friends and train data instead of becoming a single point of failure.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(label: String, good: Boolean) {
+    AssistChip(
+        onClick = { },
+        label = { Text(label, fontSize = 12.sp) },
+        leadingIcon = { Text(if (good) "●" else "○") }
+    )
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        fontSize = 19.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(top = 3.dp)
+    )
+}
+
+@Composable
+private fun FeatureCard(
+    icon: String,
+    title: String,
+    subtitle: String,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(22.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Text(icon, fontSize = 28.sp)
+            Text(title, fontWeight = FontWeight.Bold)
             Text(
-                "Core destination monitoring is designed to work on-device. Cloud features remain optional and require the configured backend.",
+                subtitle,
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -523,97 +582,624 @@ private fun SettingsScreen(store: LocalStore, onBack: () -> Unit, onAccount: () 
 }
 
 @Composable
-private fun SettingRow(title: String, subtitle: String, value: Boolean, onChange: (Boolean) -> Unit) {
-    Card {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun SetupScreen(
+    initialDestination: Destination?,
+    initialTransport: TransportMode,
+    api: ApiClient,
+    store: LocalStore,
+    onDestination: (Destination) -> Unit,
+    onTransport: (TransportMode) -> Unit,
+    onMap: () -> Unit,
+    onStart: (Destination, TransportMode, List<JourneyAlert>) -> Unit
+) {
+    var search by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<Destination>>(emptyList()) }
+    var selected by remember { mutableStateOf(initialDestination) }
+    var transport by remember { mutableStateOf(initialTransport) }
+    var firstAlert by remember { mutableStateOf("2.0") }
+    var readyAlert by remember { mutableStateOf("0.5") }
+    var finalAlert by remember { mutableStateOf("0.15") }
+    var timeAlert by remember { mutableStateOf("15") }
+    var voice by remember { mutableStateOf(true) }
+    var vibration by remember { mutableStateOf(true) }
+    var loading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+
+    fun performSearch() {
+        if (search.trim().length < 2) {
+            message = "Type at least 2 letters."
+            return
+        }
+        loading = true
+        message = ""
+        Executors.newSingleThreadExecutor().execute {
+            val response = api.searchPlaces(search)
+            val parsed = mutableListOf<Destination>()
+            val array = response.optJSONArray("results") ?: JSONArray()
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val lat = item.optDouble("latitude", Double.NaN)
+                val lon = item.optDouble("longitude", Double.NaN)
+                if (!lat.isNaN() && !lon.isNaN()) {
+                    parsed += Destination(
+                        item.optString("shortName").ifBlank { item.optString("name") },
+                        item.optString("address").ifBlank { item.optString("name") },
+                        lat,
+                        lon
+                    )
+                }
+            }
+            Handler(Looper.getMainLooper()).post {
+                loading = false
+                results = parsed
+                if (parsed.isEmpty()) {
+                    message = response.optString("error", "No places found.")
+                }
+            }
+        }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text(
+                "Where should WakeWay wake you?",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "Search a city, station, landmark or postal code.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    label = { Text("Search destination") }
+                )
+                Button(
+                    onClick = ::performSearch,
+                    modifier = Modifier.height(56.dp)
+                ) {
+                    if (loading) CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp
+                    ) else Text("Search")
+                }
+            }
+        }
+
+        if (message.isNotBlank()) {
+            item {
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp
+                )
+            }
+        }
+
+        if (results.isNotEmpty()) {
+            item { SectionTitle("Search results") }
+            items(results) { destination ->
+                ElevatedCard(
+                    onClick = {
+                        selected = destination
+                        onDestination(destination)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("📍", fontSize = 24.sp)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(destination.name, fontWeight = FontWeight.Bold)
+                            Text(
+                                destination.address,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            OutlinedButton(onClick = onMap, modifier = Modifier.fillMaxWidth()) {
+                Text("📌 Open destination map")
+            }
+        }
+
+        selected?.let { destination ->
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Selected destination", fontWeight = FontWeight.Bold)
+                        Text(destination.name, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text(destination.address, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "GPS " + String.format(Locale.US, "%.5f, %.5f", destination.latitude, destination.longitude),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        item { SectionTitle("Travel mode") }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TransportMode.entries.toList().chunked(2).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        row.forEach { mode ->
+                            FilterChip(
+                                selected = transport == mode,
+                                onClick = {
+                                    transport = mode
+                                    onTransport(mode)
+                                },
+                                label = { Text(mode.emoji + " " + mode.label) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+
+        item { SectionTitle("Progressive wake-up") }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AlertField("First warning", "kilometres", firstAlert) { firstAlert = it }
+                AlertField("Get ready", "kilometres", readyAlert) { readyAlert = it }
+                AlertField("Final arrival", "kilometres", finalAlert) { finalAlert = it }
+                AlertField("Time backup", "minutes", timeAlert) { timeAlert = it }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ToggleRow("Voice announcements", voice) { voice = it }
+                    Divider()
+                    ToggleRow("Vibration", vibration) { vibration = it }
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = {
+                    val destination = selected
+                    if (destination == null) {
+                        message = "Select a destination first."
+                        return@Button
+                    }
+
+                    val first = firstAlert.toDoubleOrNull()
+                    val ready = readyAlert.toDoubleOrNull()
+                    val finalKm = finalAlert.toDoubleOrNull()
+                    val backup = timeAlert.toDoubleOrNull()
+
+                    if (first == null || ready == null || finalKm == null || backup == null || first <= 0 || ready <= 0 || finalKm <= 0) {
+                        message = "Please enter valid alert values."
+                        return@Button
+                    }
+
+                    if (voice) store.saveSetting("voice", "true")
+                    else store.saveSetting("voice", "false")
+
+                    if (vibration) store.saveSetting("vibration", "true")
+                    else store.saveSetting("vibration", "false")
+
+                    val alerts = listOf(
+                        JourneyAlert(AlertTrigger.DISTANCE, first, "First warning"),
+                        JourneyAlert(AlertTrigger.DISTANCE, ready, "Get ready"),
+                        JourneyAlert(AlertTrigger.DISTANCE, finalKm, "Final arrival"),
+                        JourneyAlert(AlertTrigger.TIME, backup, "Time backup")
+                    )
+
+                    onStart(destination, transport, alerts)
+                },
+                modifier = Modifier.fillMaxWidth().height(58.dp),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Text("🔔 ARM WAKEWAY", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlertField(
+    title: String,
+    suffix: String,
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            label = { Text(title) }
+        )
+        Box(
+            Modifier
+                .width(90.dp)
+                .height(56.dp)
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant,
+                    RoundedCornerShape(12.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(suffix, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(title, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+        Switch(checked, onCheckedChange)
+    }
+}
+
+@Composable
+private fun ActiveScreen(
+    journey: Journey?,
+    onEnd: () -> Unit,
+    onFamily: () -> Unit,
+    onChat: () -> Unit
+) {
+    if (journey == null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("No active journey", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("Create a destination alarm from Journey.")
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("JOURNEY MONITORING", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(journey.destination.name, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(journey.destination.address, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatusPill(journey.transport.emoji + " " + journey.transport.label, true)
+                        StatusPill("GPS armed", true)
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                    Text("Alert sequence", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    AlertRow("2.0 km", "Wake-up warning", "🔔")
+                    AlertRow("500 m", "Get ready", "🧳")
+                    AlertRow("150 m", "Final alarm", "⏰")
+                    AlertRow("Time backup", "Extra safety net", "🛟")
+                }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Reliability tips", fontWeight = FontWeight.Bold)
+                    Text("Keep location enabled.", fontSize = 13.sp)
+                    Text("Keep WakeWay's foreground notification active.", fontSize = 13.sp)
+                    Text("Disable battery restrictions for long journeys when your phone requires it.", fontSize = 13.sp)
+                    Text(
+                        "The core alarm is local; family sync only runs when signed in, configured and enabled.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onFamily, modifier = Modifier.weight(1f)) {
+                    Text("👨‍👩‍👧 Share")
+                }
+                OutlinedButton(onClick = onChat, modifier = Modifier.weight(1f)) {
+                    Text("💬 Chat")
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = onEnd,
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Text("END JOURNEY")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlertRow(distance: String, label: String, icon: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(icon, fontSize = 24.sp)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.Bold)
+            Text(distance, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text("Armed", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun HistoryScreen(history: List<Journey>) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("Your journeys", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Completed and cancelled destination alarms stay on-device.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (history.isEmpty()) {
+            item {
+                Card(shape = RoundedCornerShape(22.dp)) {
+                    Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🗺", fontSize = 42.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("No journeys yet", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            "Start your first WakeWay journey and it will appear here.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        } else {
+            items(history) { item ->
+                Card(shape = RoundedCornerShape(20.dp)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(item.transport.emoji, fontSize = 24.sp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(item.destination.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Text(
+                                    item.destination.address,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            StatusPill(item.status.name.lowercase().replaceFirstChar { it.uppercase() }, item.status == JourneyStatus.COMPLETED)
+                        }
+                        Text(
+                            SimpleDateFormat("dd MMM • hh:mm a", Locale.getDefault()).format(Date(item.startedAt)),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExploreScreen(
+    backendOnline: Boolean,
+    onOpen: (Screen) -> Unit
+) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Travel tools", fontSize = 29.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (backendOnline) "Cloud services are reachable." else "Core alarm works without cloud services.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item { ToolRow("🚆", "Live trains", "Running status, stations and route APIs", Screen.TRAIN, onOpen) }
+        item { ToolRow("🌦", "Weather", "Current conditions and a 3-day forecast", Screen.WEATHER, onOpen) }
+        item { ToolRow("🤖", "WakeWay AI", "Trip planning and travel questions", Screen.AI, onOpen) }
+        item { ToolRow("👥", "Friends", "Requests, blocks and reports", Screen.FRIENDS, onOpen) }
+        item { ToolRow("👨‍👩‍👧", "Family", "Invite and private location sharing", Screen.FAMILY, onOpen) }
+        item { ToolRow("💬", "Chat", "1-to-1 conversation backend", Screen.CHAT, onOpen) }
+        item { ToolRow("⭐", "Premium", "Subscription-ready architecture", Screen.PREMIUM, onOpen) }
+        item { ToolRow("👤", "Account", "Sign in and sync your profile", Screen.ACCOUNT, onOpen) }
+    }
+}
+
+@Composable
+private fun ToolRow(
+    icon: String,
+    title: String,
+    subtitle: String,
+    screen: Screen,
+    onOpen: (Screen) -> Unit
+) {
+    ElevatedCard(
+        onClick = { onOpen(screen) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Row(Modifier.padding(17.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(icon, fontSize = 30.sp)
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Bold)
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Switch(value, onChange)
+            Text("›", fontSize = 26.sp)
         }
     }
 }
 
 @Composable
-private fun AccountScreen(api: ApiClient) {
-    val context = LocalContext.current
-    val store = remember { LocalStore(context) }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Account", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Text("Use email/password for the zero-cost starter. Google OAuth can be enabled in Supabase later.")
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = {
-                val body = JSONObject().put("email", email).put("password", password)
-                Executors.newSingleThreadExecutor().execute {
-                    val r = api.post("/api/auth/signup", body)
-                    r.optString("access_token").takeIf { it.isNotBlank() }?.let { store.saveAccessToken(it) }
-                    result = r.optString("message", r.optString("error", r.toString()))
-                }
-            }) { Text("Sign up") }
-            OutlinedButton(onClick = {
-                val body = JSONObject().put("email", email).put("password", password)
-                Executors.newSingleThreadExecutor().execute {
-                    val r = api.post("/api/auth/signin", body)
-                    r.optString("access_token").takeIf { it.isNotBlank() }?.let { store.saveAccessToken(it) }
-                    result = r.optString("message", r.optString("error", r.toString()))
-                }
-            }) { Text("Sign in") }
-        }
-        if (result.isNotBlank()) Text(result)
-        Text("Cloud login is disabled until the backend URL is configured in local.properties.", fontSize = 12.sp)
-    }
-}
+private fun TrainScreen(api: ApiClient) {
+    var trainNumber by remember { mutableStateOf("12919") }
+    var result by remember { mutableStateOf<JSONObject?>(null) }
+    var loading by remember { mutableStateOf(false) }
 
-@Composable
-private fun FamilyScreen(api: ApiClient) {
-    val context = LocalContext.current
-    val store = remember { LocalStore(context) }
-    var code by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Family Tracking", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Text("Invite family with a code instead of paying for SMS.")
-        Button(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val r = api.post("/api/family/create", JSONObject().put("name", "My Family"), store.accessToken())
-                result = r.optString("invite_code", r.optString("error", "Unable to create family"))
-            }
-        }) { Text("Create Family") }
-        OutlinedTextField(code, { code = it }, label = { Text("Invite code") }, modifier = Modifier.fillMaxWidth())
-        OutlinedButton(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val r = api.post("/api/family/join", JSONObject().put("invite_code", code), store.accessToken())
-                result = r.optString("message", r.optString("error", r.toString()))
-            }
-        }) { Text("Join Family") }
-        Text("Status: $result")
-    }
-}
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Live train status", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("RailRadar is used through the backend when an API key is configured.")
 
-@Composable
-private fun ChatScreen(api: ApiClient) {
-    val context = LocalContext.current
-    val store = remember { LocalStore(context) }
-    var message by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf("Chat uses your cloud backend when configured.") }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Chat", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Card { Text(result, Modifier.padding(16.dp)) }
-        Spacer(Modifier.weight(1f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(message, { message = it }, label = { Text("Message") }, modifier = Modifier.weight(1f))
-            Button(onClick = {
-                Executors.newSingleThreadExecutor().execute {
-                    val r = api.post("/api/chat/send", JSONObject().put("message", message), store.accessToken())
-                    result = r.optString("message", r.optString("error", r.toString()))
+            OutlinedTextField(
+                trainNumber,
+                { trainNumber = it },
+                label = { Text("Train number") },
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            Button(
+                onClick = {
+                    loading = true
+                    Executors.newSingleThreadExecutor().execute {
+                        val response = api.train(trainNumber.trim())
+                        Handler(Looper.getMainLooper()).post {
+                            result = response
+                            loading = false
+                        }
+                    }
                 }
-            }) { Text("➤") }
+            ) {
+                if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                else Text("Check")
+            }
+        }
+
+        result?.let { response ->
+            ApiResultCard(response)
+        }
+
+        Card(shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("More rail APIs are wired", fontWeight = FontWeight.Bold)
+                Text("Station search: /api/train/stations", fontSize = 12.sp)
+                Text("Trains between stations: /api/train/between", fontSize = 12.sp)
+                Text("Live train: /api/train", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeatherScreen(api: ApiClient, destination: Destination?) {
+    var lat by remember { mutableStateOf(destination?.latitude?.toString() ?: "25.2138") }
+    var lon by remember { mutableStateOf(destination?.longitude?.toString() ?: "75.8648") }
+    var result by remember { mutableStateOf<JSONObject?>(null) }
+    var loading by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Weather at destination", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("Current conditions plus a short forecast.")
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(lat, { lat = it }, label = { Text("Latitude") }, modifier = Modifier.weight(1f), singleLine = true)
+            OutlinedTextField(lon, { lon = it }, label = { Text("Longitude") }, modifier = Modifier.weight(1f), singleLine = true)
+        }
+
+        Button(
+            onClick = {
+                val latitude = lat.toDoubleOrNull()
+                val longitude = lon.toDoubleOrNull()
+                if (latitude == null || longitude == null) return@Button
+
+                loading = true
+                Executors.newSingleThreadExecutor().execute {
+                    val response = api.weather(latitude, longitude)
+                    Handler(Looper.getMainLooper()).post {
+                        result = response
+                        loading = false
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            else Text("GET WEATHER")
+        }
+
+        result?.let { response ->
+            val current = response.optJSONObject("current")
+            if (current != null) {
+                ElevatedCard(shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            current.optDouble("temperature_2m", Double.NaN).let {
+                                if (it.isNaN()) "—" else String.format(Locale.US, "%.1f°C", it)
+                            },
+                            fontSize = 35.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text("Feels like " + current.optDouble("apparent_temperature", 0.0) + "°C")
+                        Text("Humidity " + current.optInt("relative_humidity_2m", 0) + "%")
+                        Text("Wind " + current.optDouble("wind_speed_10m", 0.0) + " km/h")
+                        Text("Precipitation " + current.optDouble("precipitation", 0.0) + " mm")
+                    }
+                }
+            }
+            ApiResultCard(response, skipKeys = setOf("current", "hourly", "daily", "latitude", "longitude", "timezone"))
         }
     }
 }
@@ -621,121 +1207,750 @@ private fun ChatScreen(api: ApiClient) {
 @Composable
 private fun AiScreen(api: ApiClient) {
     var prompt by remember { mutableStateOf("") }
-    var answer by remember { mutableStateOf("Ask me to plan a journey, explain your alerts, or simplify travel information.") }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("AI Journey Assistant", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        OutlinedTextField(prompt, { prompt = it }, label = { Text("Ask WakeWay AI") }, modifier = Modifier.fillMaxWidth())
-        Button(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val r = api.post("/api/ai", JSONObject().put("prompt", prompt))
-                answer = r.optString("answer", r.optString("error", "AI unavailable; basic app still works."))
-            }
-        }) { Text("ASK AI") }
-        Card { Text(answer, Modifier.padding(16.dp)) }
-    }
-}
-
-@Composable
-private fun WeatherScreen(api: ApiClient) {
-    var lat by remember { mutableStateOf("25.2138") }
-    var lon by remember { mutableStateOf("75.8648") }
-    var result by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Weather", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(lat, { lat = it }, label = { Text("Lat") }, modifier = Modifier.weight(1f))
-            OutlinedTextField(lon, { lon = it }, label = { Text("Lon") }, modifier = Modifier.weight(1f))
-        }
-        Button(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val r = api.get("/api/weather", query = mapOf("lat" to lat, "lon" to lon))
-                result = r.toString(2)
-            }
-        }) { Text("GET WEATHER") }
-        LazyColumn { item { Text(result) } }
-    }
-}
-
-@Composable
-private fun TrainScreen(api: ApiClient) {
-    var train by remember { mutableStateOf("12919") }
-    var result by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Live Train", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        OutlinedTextField(train, { train = it }, label = { Text("Train number") }, modifier = Modifier.fillMaxWidth())
-        Button(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val r = api.get("/api/train", query = mapOf("train" to train))
-                result = r.toString(2)
-            }
-        }) { Text("CHECK TRAIN") }
-        LazyColumn { item { Text(result) } }
-    }
-}
-
-@Composable
-private fun SocialScreen(api: ApiClient) {
-    val context = LocalContext.current
-    val store = remember { LocalStore(context) }
-    var username by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf("Social features: friends, requests, privacy, block/report and activity are part of the app structure. Cloud sync is enabled after backend setup.") }
+    var answer by remember { mutableStateOf("Ask about planning, packing, trip timing or how WakeWay works.") }
+    var loading by remember { mutableStateOf(false) }
 
     Column(
-        Modifier.fillMaxSize().padding(20.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Social", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Text("Friends, requests and journey sharing without making location public by default.")
+        Text("WakeWay AI", fontSize = 29.sp, fontWeight = FontWeight.Bold)
+        Text("AI stays behind the backend so your provider key is not shipped in the APK.")
+
         OutlinedTextField(
-            username,
-            { username = it },
-            label = { Text("Friend username") },
-            modifier = Modifier.fillMaxWidth()
+            prompt,
+            { prompt = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 4,
+            label = { Text("Ask anything about this journey") }
         )
-        Button(onClick = {
-            result = if (username.isBlank()) "Enter a username first." else "Friend request prepared for $username. Connect the social endpoint after backend setup."
-        }) {
-            Text("Send friend request")
+
+        Button(
+            onClick = {
+                if (prompt.isBlank()) return@Button
+                loading = true
+                Executors.newSingleThreadExecutor().execute {
+                    val response = api.ai(prompt)
+                    Handler(Looper.getMainLooper()).post {
+                        answer = response.optString("answer", response.optString("error", "No response"))
+                        loading = false
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            else Text("ASK WAKEWAY")
         }
-        OutlinedButton(onClick = {
-            store.saveSetting("social_share", "true")
-            result = "Journey sharing preference enabled locally. No location is shared until a supported backend session is active."
-        }) {
-            Text("Enable journey sharing")
+
+        Card(shape = RoundedCornerShape(22.dp)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Assistant", fontWeight = FontWeight.Bold)
+                Text(answer)
+            }
         }
-        Card { Text(result, Modifier.padding(16.dp)) }
     }
 }
 
 @Composable
-private fun PremiumScreen() {
+private fun FamilyScreen(api: ApiClient, store: LocalStore) {
+    val token = store.accessToken()
+    var familyName by remember { mutableStateOf("My Family") }
+    var inviteCode by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf("") }
+    var locations by remember { mutableStateOf<JSONArray?>(null) }
+
+    if (token.isNullOrBlank()) {
+        AuthRequiredCard("Sign in to use Family Tracking.")
+        return
+    }
+
     Column(
-        Modifier.fillMaxSize().padding(20.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("WakeWay Premium", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Text("Premium architecture is included now so paid features can be added without rebuilding the app.")
-        listOf(
-            "Advanced alert profiles",
-            "Expanded saved places",
-            "Enhanced AI travel help",
-            "Premium map experience",
-            "Advanced family controls",
-            "Detailed journey statistics"
-        ).forEach {
-            Card {
-                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("⭐", fontSize = 20.sp)
-                    Spacer(Modifier.width(10.dp))
-                    Text(it)
+        Text("Family tracking", fontSize = 29.sp, fontWeight = FontWeight.Bold)
+        Text("Private sharing is off by default and only syncs when you enable it.")
+
+        OutlinedTextField(
+            familyName,
+            { familyName = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Family name") }
+        )
+
+        Button(onClick = {
+            Executors.newSingleThreadExecutor().execute {
+                val response = api.family(
+                    "create",
+                    JSONObject().put("name", familyName),
+                    token
+                )
+                Handler(Looper.getMainLooper()).post {
+                    result = if (response.has("invite_code")) {
+                        "Invite code: " + response.optString("invite_code")
+                    } else {
+                        response.optString("error", response.toString())
+                    }
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("CREATE FAMILY")
+        }
+
+        OutlinedTextField(
+            inviteCode,
+            { inviteCode = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Invite code") }
+        )
+
+        OutlinedButton(onClick = {
+            Executors.newSingleThreadExecutor().execute {
+                val response = api.family(
+                    "join",
+                    JSONObject().put("invite_code", inviteCode),
+                    token
+                )
+                Handler(Looper.getMainLooper()).post {
+                    result = response.optString("message", response.optString("error", response.toString()))
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("JOIN FAMILY")
+        }
+
+        OutlinedButton(onClick = {
+            Executors.newSingleThreadExecutor().execute {
+                val response = api.family("locations", bearer = token)
+                Handler(Looper.getMainLooper()).post {
+                    locations = response.optJSONArray("locations")
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("REFRESH FAMILY LOCATIONS")
+        }
+
+        if (result.isNotBlank()) {
+            Card(shape = RoundedCornerShape(18.dp)) {
+                Text(result, Modifier.padding(16.dp))
+            }
+        }
+
+        locations?.let { arr ->
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Latest shared locations", fontWeight = FontWeight.Bold)
+                    if (arr.length() == 0) Text("No family locations yet.")
+                    for (i in 0 until arr.length()) {
+                        val row = arr.optJSONObject(i) ?: continue
+                        Text(
+                            row.optString("user_id") + " • " +
+                                String.format(Locale.US, "%.4f, %.4f", row.optDouble("latitude"), row.optDouble("longitude"))
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun FriendsScreen(api: ApiClient, store: LocalStore) {
+    val token = store.accessToken()
+    var username by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf("") }
+    var pending by remember { mutableStateOf<JSONArray?>(null) }
+
+    if (token.isNullOrBlank()) {
+        AuthRequiredCard("Sign in to use Friends.")
+        return
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Friends", fontSize = 29.sp, fontWeight = FontWeight.Bold)
+        Text("Search, send requests, accept requests, block or report accounts.")
+
+        OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Username") })
+        Button(onClick = {
+            Executors.newSingleThreadExecutor().execute {
+                val response = api.friends(
+                    "request",
+                    JSONObject().put("username", username),
+                    token
+                )
+                Handler(Looper.getMainLooper()).post {
+                    result = response.optString("message", response.optString("error", response.toString()))
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("SEND FRIEND REQUEST")
+        }
+
+        Divider()
+
+        OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search people") })
+        OutlinedButton(onClick = {
+            Executors.newSingleThreadExecutor().execute {
+                val response = api.friends("search", bearer = token, query = mapOf("q" to query))
+                Handler(Looper.getMainLooper()).post {
+                    result = response.optJSONArray("results")?.toString() ?: response.toString()
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("SEARCH")
+        }
+
+        OutlinedButton(onClick = {
+            Executors.newSingleThreadExecutor().execute {
+                val response = api.friends("list", bearer = token)
+                Handler(Looper.getMainLooper()).post {
+                    pending = response.optJSONArray("pending")
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("LOAD PENDING REQUESTS")
+        }
+
+        pending?.let { array ->
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Pending requests", fontWeight = FontWeight.Bold)
+                    if (array.length() == 0) {
+                        Text("No pending requests.")
+                    } else {
+                        for (i in 0 until array.length()) {
+                            val row = array.optJSONObject(i) ?: continue
+                            val requestId = row.optString("id")
+                            val profile = row.optJSONObject("profiles")
+                            val name = profile?.optString("username").orEmpty().ifBlank {
+                                profile?.optString("display_name").orEmpty()
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(name.ifBlank { "Unknown user" }, Modifier.weight(1f))
+                                TextButton(onClick = {
+                                    Executors.newSingleThreadExecutor().execute {
+                                        api.friends("accept", JSONObject().put("request_id", requestId), token)
+                                    }
+                                }) { Text("Accept") }
+                                TextButton(onClick = {
+                                    Executors.newSingleThreadExecutor().execute {
+                                        api.friends("reject", JSONObject().put("request_id", requestId), token)
+                                    }
+                                }) { Text("Reject") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (result.isNotBlank()) {
+            ApiPlainCard(result)
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                Executors.newSingleThreadExecutor().execute {
+                    val response = api.friends("block", JSONObject().put("username", username), token)
+                    Handler(Looper.getMainLooper()).post {
+                        result = response.optString("message", response.optString("error", response.toString()))
+                    }
+                }
+            }, modifier = Modifier.weight(1f)) {
+                Text("Block")
+            }
+            OutlinedButton(onClick = {
+                Executors.newSingleThreadExecutor().execute {
+                    val response = api.friends(
+                        "report",
+                        JSONObject().put("username", username).put("reason", "Reported from WakeWay"),
+                        token
+                    )
+                    Handler(Looper.getMainLooper()).post {
+                        result = response.optString("message", response.optString("error", response.toString()))
+                    }
+                }
+            }, modifier = Modifier.weight(1f)) {
+                Text("Report")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatScreen(api: ApiClient, store: LocalStore) {
+    val token = store.accessToken()
+    var toUsername by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    var conversationId by remember { mutableStateOf("") }
+    var transcript by remember { mutableStateOf("Start a conversation with a username.") }
+    var loading by remember { mutableStateOf(false) }
+
+    if (token.isNullOrBlank()) {
+        AuthRequiredCard("Sign in to use Chat.")
+        return
+    }
+
+    Column(
+        Modifier.fillMaxSize().padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("Chat", fontSize = 29.sp, fontWeight = FontWeight.Bold)
+        OutlinedTextField(
+            toUsername,
+            { toUsername = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Friend username") }
+        )
+
+        Card(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp)
+        ) {
+            Text(
+                transcript,
+                Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            )
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                message,
+                { message = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("Message") },
+                singleLine = true
+            )
+            Button(onClick = {
+                if (message.isBlank()) return@Button
+                loading = true
+                Executors.newSingleThreadExecutor().execute {
+                    val body = JSONObject().put("message", message)
+                    if (conversationId.isBlank()) body.put("to_username", toUsername)
+                    else body.put("conversation_id", conversationId)
+                    val response = api.chat("send", body, token)
+                    Handler(Looper.getMainLooper()).post {
+                        conversationId = response.optString("conversation_id", conversationId)
+                        transcript = if (response.has("error")) response.optString("error") else {
+                            transcript + "\n\nYou: " + message
+                        }
+                        message = ""
+                        loading = false
+                    }
+                }
+            }) {
+                if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                else Text("➤")
+            }
+        }
+
+        if (conversationId.isNotBlank()) {
+            OutlinedButton(onClick = {
+                Executors.newSingleThreadExecutor().execute {
+                    val response = api.chat(
+                        "list",
+                        bearer = token,
+                        query = mapOf("conversation_id" to conversationId)
+                    )
+                    val array = response.optJSONArray("messages")
+                    val text = buildString {
+                        if (array != null) {
+                            for (i in 0 until array.length()) {
+                                val item = array.optJSONObject(i) ?: continue
+                                append(item.optString("sender_id"))
+                                append(": ")
+                                append(item.optString("body"))
+                                append("\n")
+                            }
+                        }
+                    }
+                    Handler(Looper.getMainLooper()).post {
+                        transcript = text.ifBlank { "No messages yet." }
+                    }
+                }
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("REFRESH MESSAGES")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccountScreen(
+    api: ApiClient,
+    store: LocalStore,
+    onProfileUpdated: () -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var displayName by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    var signedIn by remember { mutableStateOf(!store.accessToken().isNullOrBlank()) }
+
+    LaunchedEffect(signedIn) {
+        if (signedIn) {
+            Executors.newSingleThreadExecutor().execute {
+                val profile = api.profile(store.accessToken())
+                Handler(Looper.getMainLooper()).post {
+                    username = profile.optString("username")
+                    displayName = profile.optString("display_name")
+                }
+            }
+        }
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Account", fontSize = 29.sp, fontWeight = FontWeight.Bold)
         Text(
-            "Google Play Billing is intentionally kept server-verifiable. This starter does not pretend a subscription exists until billing products and verification are configured.",
-            fontSize = 12.sp,
+            "Email authentication uses Supabase through the Worker. No provider secret belongs in the app.",
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        if (!signedIn) {
+            OutlinedTextField(email, { email = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Email") })
+            OutlinedTextField(password, { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Password") })
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    Executors.newSingleThreadExecutor().execute {
+                        val response = api.post(
+                            "/api/auth/signup",
+                            JSONObject().put("email", email).put("password", password)
+                        )
+                        Handler(Looper.getMainLooper()).post {
+                            val token = response.optString("access_token")
+                            if (token.isNotBlank()) {
+                                store.saveAccessToken(token)
+                                signedIn = true
+                            }
+                            message = response.optString(
+                                "message",
+                                response.optString("error", "Check your email if confirmation is enabled.")
+                            )
+                        }
+                    }
+                }, modifier = Modifier.weight(1f)) { Text("Sign up") }
+
+                OutlinedButton(onClick = {
+                    Executors.newSingleThreadExecutor().execute {
+                        val response = api.post(
+                            "/api/auth/signin",
+                            JSONObject().put("email", email).put("password", password)
+                        )
+                        Handler(Looper.getMainLooper()).post {
+                            val token = response.optString("access_token")
+                            if (token.isNotBlank()) {
+                                store.saveAccessToken(token)
+                                signedIn = true
+                            }
+                            message = response.optString("message", response.optString("error", response.toString()))
+                        }
+                    }
+                }, modifier = Modifier.weight(1f)) { Text("Sign in") }
+            }
+        } else {
+            Text("Signed in", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Username") })
+            OutlinedTextField(displayName, { displayName = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Display name") })
+
+            Button(onClick = {
+                Executors.newSingleThreadExecutor().execute {
+                    val response = api.updateProfile(
+                        JSONObject()
+                            .put("username", username)
+                            .put("display_name", displayName),
+                        store.accessToken()
+                    )
+                    Handler(Looper.getMainLooper()).post {
+                        message = if (response.has("error")) response.optString("error") else "Profile saved."
+                        onProfileUpdated()
+                    }
+                }
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("SAVE PROFILE")
+            }
+
+            OutlinedButton(onClick = {
+                store.clearAccessToken()
+                signedIn = false
+                username = ""
+                displayName = ""
+                message = "Signed out."
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("SIGN OUT")
+            }
+        }
+
+        if (message.isNotBlank()) ApiPlainCard(message)
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    api: ApiClient,
+    store: LocalStore,
+    onAccount: () -> Unit
+) {
+    val context = LocalContext.current
+    var backendUrl by remember { mutableStateOf(api.backendUrl()) }
+    var status by remember { mutableStateOf("") }
+    var voice by remember { mutableStateOf(store.setting("voice", "true") == "true") }
+    var vibration by remember { mutableStateOf(store.setting("vibration", "true") == "true") }
+    var autoShare by remember { mutableStateOf(store.setting("auto_share", "false") == "true") }
+    var history by remember { mutableStateOf(store.setting("history", "true") == "true") }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("Control centre", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text("Tune the app without changing the alarm engine.")
+        }
+
+        item { SectionTitle("Alarm") }
+
+        item {
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    ToggleRow("Voice announcements", voice) {
+                        voice = it
+                        store.saveSetting("voice", it.toString())
+                    }
+                    Divider()
+                    ToggleRow("Vibration", vibration) {
+                        vibration = it
+                        store.saveSetting("vibration", it.toString())
+                    }
+                    Divider()
+                    ToggleRow("Save history", history) {
+                        history = it
+                        store.saveSetting("history", it.toString())
+                    }
+                }
+            }
+        }
+
+        item { SectionTitle("Sharing & cloud") }
+
+        item {
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    ToggleRow("Family location sharing", autoShare) {
+                        autoShare = it
+                        store.saveSetting("auto_share", it.toString())
+                    }
+                    Text(
+                        "When enabled, the foreground journey service can send your latest GPS location to your family account every ~30 seconds.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+                }
+            }
+        }
+
+        item {
+            OutlinedTextField(
+                backendUrl,
+                { backendUrl = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("WakeWay backend URL") },
+                singleLine = true,
+                placeholder = { Text("https://your-worker.workers.dev") }
+            )
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = {
+                    api.setBackendUrl(backendUrl)
+                    Executors.newSingleThreadExecutor().execute {
+                        val response = api.health()
+                        Handler(Looper.getMainLooper()).post {
+                            status = if (response.optBoolean("ok")) {
+                                "Connected successfully."
+                            } else {
+                                response.optString("error", "Backend did not respond as expected.")
+                            }
+                        }
+                    }
+                }, modifier = Modifier.weight(1f)) {
+                    Text("TEST BACKEND")
+                }
+                OutlinedButton(onClick = {
+                    api.setBackendUrl("")
+                    backendUrl = ""
+                    status = "Backend override cleared. Local-first fallbacks remain available."
+                }, modifier = Modifier.weight(1f)) {
+                    Text("CLEAR")
+                }
+            }
+        }
+
+        if (status.isNotBlank()) item { ApiPlainCard(status) }
+
+        item { SectionTitle("System permissions") }
+
+        item {
+            OutlinedButton(
+                onClick = {
+                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    }
+                    context.startActivity(intent)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Notification settings")
+            }
+        }
+
+        item {
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Battery optimisation")
+            }
+        }
+
+        item {
+            OutlinedButton(onClick = onAccount, modifier = Modifier.fillMaxWidth()) {
+                Text("Account & profile")
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumScreen(api: ApiClient, store: LocalStore) {
+    var result by remember { mutableStateOf("Premium is subscription-ready but not falsely marked as purchased.") }
+
+    val token = store.accessToken()
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                )
+            ) {
+                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("WAKEWAY PREMIUM", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("More control. More context.", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Billing can be activated later with server verification.")
+                }
+            }
+        }
+
+        item { PremiumFeature("✦", "Advanced alert profiles", "More distance/time combinations") }
+        item { PremiumFeature("✦", "Enhanced AI", "Longer, context-aware travel sessions") }
+        item { PremiumFeature("✦", "Family controls", "Additional sharing controls") }
+        item { PremiumFeature("✦", "Journey analytics", "More detailed statistics and exports") }
+
+        item {
+            OutlinedButton(
+                onClick = {
+                    if (token.isNullOrBlank()) {
+                        result = "Sign in first to read your subscription status."
+                        return@OutlinedButton
+                    }
+                    Executors.newSingleThreadExecutor().execute {
+                        val response = api.subscription(token)
+                        Handler(Looper.getMainLooper()).post {
+                            result = response.optJSONObject("subscription")?.toString()
+                                ?: response.optString("error", response.toString())
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("CHECK SUBSCRIPTION")
+            }
+        }
+
+        item { ApiPlainCard(result) }
+    }
+}
+
+@Composable
+private fun PremiumFeature(icon: String, title: String, subtitle: String) {
+    Card(shape = RoundedCornerShape(20.dp)) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(icon, fontSize = 24.sp)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AuthRequiredCard(message: String) {
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Card(shape = RoundedCornerShape(22.dp)) {
+            Column(
+                Modifier.padding(22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("👤", fontSize = 42.sp)
+                Text(message, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(
+                    "Open Account from Settings or Home and sign in.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApiResultCard(response: JSONObject, skipKeys: Set<String> = emptySet()) {
+    val text = response.toString(2)
+    Card(shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                if (response.has("error")) "Service response" else "Live response",
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(7.dp))
+            Text(
+                text,
+                fontSize = 11.sp,
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            )
+        }
+    }
+}
+
+@Composable
+private fun ApiPlainCard(message: String) {
+    Card(shape = RoundedCornerShape(18.dp)) {
+        Text(message, Modifier.padding(16.dp))
     }
 }
 
@@ -748,28 +1963,37 @@ private fun MapScreen(destination: Destination?) {
             settings.domStorageEnabled = true
         }
     }
+
     AndroidView(
         factory = { webView },
         modifier = Modifier.fillMaxSize(),
-        update = { wv ->
+        update = { view ->
             val lat = destination?.latitude ?: 25.2138
             val lon = destination?.longitude ?: 75.8648
+            val label = (destination?.name ?: "Destination").replace("'", "\\\\'")
             val html = """
-                <!doctype html><html><head>
-                <meta name="viewport" content="width=device-width,initial-scale=1">
-                <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-                <style>html,body,#map{height:100%;margin:0}</style>
-                </head><body><div id="map"></div>
-                <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-                <script>
-                const map=L.map('map').setView([$lat,$lon],13);
-                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
-                    maxZoom:19, attribution:'© OpenStreetMap contributors'
-                }).addTo(map);
-                L.marker([$lat,$lon]).addTo(map).bindPopup('${(destination?.name ?: "Destination").replace("'", "\\'")}').openPopup();
-                </script></body></html>
+                <!doctype html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width,initial-scale=1">
+                    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+                    <style>html,body,#map{height:100%;margin:0}</style>
+                </head>
+                <body>
+                  <div id="map"></div>
+                  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                  <script>
+                    const map = L.map('map').setView([$lat,$lon], 13);
+                    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                      maxZoom: 19,
+                      attribution: '© OpenStreetMap contributors'
+                    }).addTo(map);
+                    L.marker([$lat,$lon]).addTo(map).bindPopup('$label').openPopup();
+                  </script>
+                </body>
+                </html>
             """.trimIndent()
-            wv.loadDataWithBaseURL("https://localhost/", html, "text/html", "UTF-8", null)
+            view.loadDataWithBaseURL("https://localhost/", html, "text/html", "UTF-8", null)
         }
     )
 }
