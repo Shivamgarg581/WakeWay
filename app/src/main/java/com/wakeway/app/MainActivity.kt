@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -226,7 +227,7 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun SmallTool(icon: String, label: String, onClick: () -> Unit) {
+private fun RowScope.SmallTool(icon: String, label: String, onClick: () -> Unit) {
     Card(onClick = onClick, modifier = Modifier.weight(1f)) {
         Column(
             Modifier.padding(14.dp),
