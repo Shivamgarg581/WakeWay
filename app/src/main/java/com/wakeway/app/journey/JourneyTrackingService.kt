@@ -27,7 +27,9 @@ class JourneyTrackingService : Service(), LocationListener {
     private val firedDistanceAlerts = mutableSetOf<String>()
     private val cloudExecutor = Executors.newSingleThreadExecutor()
     private var lastCloudLocationSync = 0L
+    private val firedTimeAlerts = mutableSetOf<String>()
     private var finalAlarmed = false
+    private var lastDistanceMeters: Double? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -109,8 +111,16 @@ class JourneyTrackingService : Service(), LocationListener {
             journey.destination.longitude
         )
 
+        val speedKmh = if (location.hasSpeed() && location.speed >= 0f) location.speed * 3.6f else 0f
+        val etaText = if (speedKmh >= 3f) {
+            val etaMinutes = ((distance / 1000.0) / speedKmh * 60.0).toInt().coerceAtLeast(1)
+            " • ETA ~" + etaMinutes + " min"
+        } else {
+            ""
+        }
+
         updateNotification(
-            formatDistance(distance) + " • accuracy ±" + location.accuracy.toInt() + "m"
+            formatDistance(distance) + etaText + " • accuracy ±" + location.accuracy.toInt() + "m"
         )
         syncLocation(journey, location)
 
@@ -132,6 +142,26 @@ class JourneyTrackingService : Service(), LocationListener {
                 alert(message)
             }
         }
+
+        val elapsedMinutes = (System.currentTimeMillis() - journey.startedAt) / 60000.0
+        journey.alerts
+            .filter { it.trigger == AlertTrigger.TIME }
+            .forEach { alertRule ->
+                val minutes = alertRule.value
+                val key = minutes.toString() + ":" + alertRule.label
+                if (minutes > 0 && elapsedMinutes >= minutes && firedTimeAlerts.add(key)) {
+                    alert(
+                        "Wake up. Your WakeWay time backup for " + journey.destination.name +
+                            " has reached " + trim(minutes) + " minutes."
+                    )
+                }
+            }
+
+        val previousDistance = lastDistanceMeters
+        if (previousDistance != null && distance > previousDistance + 120.0 && previousDistance < 700.0 && !finalAlarmed) {
+            alert("WakeWay noticed you may be moving away from " + journey.destination.name + ". Please check your route.")
+        }
+        lastDistanceMeters = distance
 
         val destinationRadius = distanceAlerts
             .minOfOrNull { it.value * 1000.0 }

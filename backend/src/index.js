@@ -456,6 +456,31 @@ async function trainStationLive(request, env) {
 }
 
 
+
+async function stationBoard(request, env) {
+  const u = new URL(request.url);
+  const code = String(u.searchParams.get("code") || "").trim().toUpperCase();
+  if (!code) return json({ error: "station code required" }, 400);
+  const includeIntermediate = u.searchParams.get("includeIntermediate") === "true";
+  return railRadar(request, env, () => "/v1/stations/" + encodeURIComponent(code) + "/trains?includeIntermediate=" + includeIntermediate);
+}
+
+async function stationDirectory(request, env, ntes = false) {
+  return railRadar(request, env, () => ntes ? "/v1/lookup/stations/ntes" : "/v1/lookup/stations");
+}
+
+async function trainDirectory(request, env, variant = "prs") {
+  const path = variant === "ntes" ? "/v1/lookup/trains/ntes" : variant === "compressed" ? "/v1/lookup/trains/compressed" : "/v1/lookup/trains/prs";
+  return railRadar(request, env, () => path);
+}
+
+async function trainFilter(request, env) {
+  const u = new URL(request.url);
+  const params = new URLSearchParams();
+  if (u.searchParams.has("category")) params.set("category", u.searchParams.get("category"));
+  if (u.searchParams.has("type")) params.set("type", u.searchParams.get("type"));
+  return railRadar(request, env, () => "/v1/lookup/trains/filter?" + params.toString());
+}
 function buildQuery(url, skip = []) {
   const params = new URLSearchParams();
   for (const [k, v] of url.searchParams.entries()) {
@@ -471,35 +496,52 @@ async function ai(request, env) {
   if (!prompt) return json({ error: "prompt required" }, 400);
 
   if (!env.GEMINI_API_KEY) {
-    return json({
-      configured: false,
-      answer: "AI is not configured. Add GEMINI_API_KEY to the Worker to enable WakeWay AI."
-    });
+    return json({ configured: false, answer: "AI is not configured. Add GEMINI_API_KEY to the Worker." });
   }
 
-  const model = env.GEMINI_MODEL || "gemini-2.5-flash";
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
-
-  const r = await fetch(endpoint, {
+  const model = env.GEMINI_MODEL || "gemini-3.8-flash";
+  const interactionResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": env.GEMINI_API_KEY,
+      "Api-Revision": "2026-05-20"
+    },
     body: JSON.stringify({
-      systemInstruction: {
-        parts: [{
-          text: "You are WakeWay, a practical travel assistant. Never invent live train, weather, GPS or ETA data. Be concise, safety-conscious and clear."
-        }]
-      },
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 700 }
+      model,
+      input: prompt,
+      generation_config: { temperature: 0.4, max_output_tokens: 700 }
     })
   });
 
-  const data = await r.json();
-  const answer = data?.candidates?.[0]?.content?.parts?.map(x => x.text || "").join("")?.trim();
+  const interactionData = await interactionResponse.json();
+  const outputText = interactionData?.steps?.filter(s => s?.type === "model_output")
+    ?.flatMap(s => s?.content || [])
+    ?.filter(x => x?.type === "text")
+    ?.map(x => x?.text || "").join("").trim();
 
-  if (!r.ok) return json({ error: data?.error?.message || "Gemini request failed" }, r.status);
-  return json({ configured: true, answer: answer || "AI returned no text." });
+  if (interactionResponse.ok && outputText) {
+    return json({ configured: true, provider: "gemini-interactions", model, interaction_id: interactionData?.id || null, answer: outputText });
+  }
+
+  const legacyResponse = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent?key=" + encodeURIComponent(env.GEMINI_API_KEY),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: "You are WakeWay, a practical travel assistant. Never invent live train, weather, GPS or ETA data." }] },
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.4, maxOutputTokens: 700 }
+      })
+    }
+  );
+  const legacyData = await legacyResponse.json();
+  const legacyAnswer = legacyData?.candidates?.[0]?.content?.parts?.map(x => x.text || "").join("").trim();
+  if (!legacyResponse.ok) {
+    return json({ configured: true, error: legacyData?.error?.message || interactionData?.error?.message || "Gemini request failed" }, legacyResponse.status);
+  }
+  return json({ configured: true, provider: "gemini-generate-content-fallback", model, answer: legacyAnswer || "AI returned no text." });
 }
 
 async function family(request, env, action) {
@@ -957,6 +999,13 @@ async function config(env) {
       "/api/train/seats",
       "/api/train/coaches",
       "/api/train/station-live",
+      "/api/train/station-board",
+      "/api/train/stations-directory",
+      "/api/train/stations-ntes",
+      "/api/train/directory",
+      "/api/train/directory-ntes",
+      "/api/train/directory-compressed",
+      "/api/train/filter",
       "/api/ai",
       "/api/family/*",
       "/api/friends/*",
@@ -1007,6 +1056,13 @@ export default {
       if (p === "/api/train/seats" && request.method === "GET") return trainSeats(request, env);
       if (p === "/api/train/coaches" && request.method === "GET") return trainCoach(request, env);
       if (p === "/api/train/station-live" && request.method === "GET") return trainStationLive(request, env);
+      if (p === "/api/train/station-board" && request.method === "GET") return stationBoard(request, env);
+      if (p === "/api/train/stations-directory" && request.method === "GET") return stationDirectory(request, env, false);
+      if (p === "/api/train/stations-ntes" && request.method === "GET") return stationDirectory(request, env, true);
+      if (p === "/api/train/directory" && request.method === "GET") return trainDirectory(request, env, "prs");
+      if (p === "/api/train/directory-ntes" && request.method === "GET") return trainDirectory(request, env, "ntes");
+      if (p === "/api/train/directory-compressed" && request.method === "GET") return trainDirectory(request, env, "compressed");
+      if (p === "/api/train/filter" && request.method === "GET") return trainFilter(request, env);
 
       if (p === "/api/ai" && request.method === "POST") return ai(request, env);
 

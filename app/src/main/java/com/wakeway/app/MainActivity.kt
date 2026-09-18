@@ -895,15 +895,12 @@ private fun ActiveScreen(
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             ) {
                 Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("JOURNEY MONITORING", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(journey.destination.name, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
                     Text(journey.destination.address, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatusPill(journey.transport.emoji + " " + journey.transport.label, true)
                         StatusPill("GPS armed", true)
@@ -916,10 +913,12 @@ private fun ActiveScreen(
             Card(shape = RoundedCornerShape(22.dp)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
                     Text("Alert sequence", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    AlertRow("2.0 km", "Wake-up warning", "🔔")
-                    AlertRow("500 m", "Get ready", "🧳")
-                    AlertRow("150 m", "Final alarm", "⏰")
-                    AlertRow("Time backup", "Extra safety net", "🛟")
+                    journey.alerts.forEach { rule ->
+                        val valueText = if (rule.trigger.name == "DISTANCE")
+                            (if (rule.value >= 1.0) String.format(Locale.US, "%.1f km", rule.value) else String.format(Locale.US, "%.0f m", rule.value * 1000.0))
+                        else String.format(Locale.US, "%.0f min after start", rule.value)
+                        AlertRow(valueText, rule.label, if (rule.trigger.name == "DISTANCE") "🔔" else "⏱️")
+                    }
                 }
             }
         }
@@ -929,40 +928,27 @@ private fun ActiveScreen(
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Reliability tips", fontWeight = FontWeight.Bold)
                     Text("Keep location enabled.", fontSize = 13.sp)
-                    Text("Keep WakeWay's foreground notification active.", fontSize = 13.sp)
-                    Text("Disable battery restrictions for long journeys when your phone requires it.", fontSize = 13.sp)
-                    Text(
-                        "The core alarm is local; family sync only runs when signed in, configured and enabled.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text("Keep the WakeWay foreground notification visible.", fontSize = 13.sp)
+                    Text("Remove battery restrictions for reliable long journeys on phones that apply them.", fontSize = 13.sp)
+                    Text("The destination alarm stays on-device; cloud sync is optional.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onFamily, modifier = Modifier.weight(1f)) {
-                    Text("👨‍👩‍👧 Share")
-                }
-                OutlinedButton(onClick = onChat, modifier = Modifier.weight(1f)) {
-                    Text("💬 Chat")
-                }
+                OutlinedButton(onClick = onFamily, modifier = Modifier.weight(1f)) { Text("👨‍👩‍👧 Share") }
+                OutlinedButton(onClick = onChat, modifier = Modifier.weight(1f)) { Text("💬 Chat") }
             }
         }
 
         item {
-            Button(
-                onClick = onEnd,
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                shape = RoundedCornerShape(18.dp)
-            ) {
+            Button(onClick = onEnd, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(18.dp)) {
                 Text("END JOURNEY")
             }
         }
     }
 }
-
 @Composable
 private fun AlertRow(distance: String, label: String, icon: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1090,56 +1076,90 @@ private fun ToolRow(
 @Composable
 private fun TrainScreen(api: ApiClient) {
     var trainNumber by remember { mutableStateOf("12919") }
+    var stationCode by remember { mutableStateOf("KOTA") }
+    var fromCode by remember { mutableStateOf("KOTA") }
+    var toCode by remember { mutableStateOf("JP") }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var result by remember { mutableStateOf<JSONObject?>(null) }
     var loading by remember { mutableStateOf(false) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("Live train status", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Text("RailRadar is used through the backend when an API key is configured.")
+        Text("Rail control centre", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("Live train data is routed through WakeWay. A RailRadar key is required for live railway responses.", color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                trainNumber,
-                { trainNumber = it },
-                label = { Text("Train number") },
-                modifier = Modifier.weight(1f),
-                singleLine = true
-            )
-            Button(
-                onClick = {
-                    loading = true
-                    Executors.newSingleThreadExecutor().execute {
-                        val response = api.train(trainNumber.trim())
-                        Handler(Looper.getMainLooper()).post {
-                            result = response
-                            loading = false
-                        }
-                    }
-                }
-            ) {
-                if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Text("Check")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf("Train live", "Station live", "Between").forEachIndexed { index, label ->
+                FilterChip(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    label = { Text(label) },
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
 
-        result?.let { response ->
-            ApiResultCard(response)
+        when (selectedTab) {
+            0 -> {
+                OutlinedTextField(trainNumber, { trainNumber = it }, label = { Text("Train number") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Button(
+                    onClick = {
+                        loading = true
+                        Executors.newSingleThreadExecutor().execute {
+                            val response = api.train(trainNumber.trim())
+                            Handler(Looper.getMainLooper()).post { result = response; loading = false }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("CHECK LIVE STATUS") }
+            }
+            1 -> {
+                OutlinedTextField(stationCode, { stationCode = it.uppercase(Locale.US) }, label = { Text("Station code") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = {
+                        loading = true
+                        Executors.newSingleThreadExecutor().execute {
+                            val response = api.stationLive(stationCode)
+                            Handler(Looper.getMainLooper()).post { result = response; loading = false }
+                        }
+                    }, modifier = Modifier.weight(1f)) { Text("LIVE BOARD") }
+                    OutlinedButton(onClick = {
+                        loading = true
+                        Executors.newSingleThreadExecutor().execute {
+                            val response = api.stationBoard(stationCode)
+                            Handler(Looper.getMainLooper()).post { result = response; loading = false }
+                        }
+                    }, modifier = Modifier.weight(1f)) { Text("TIMETABLE") }
+                }
+            }
+            else -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(fromCode, { fromCode = it.uppercase(Locale.US) }, label = { Text("From") }, modifier = Modifier.weight(1f), singleLine = true)
+                    OutlinedTextField(toCode, { toCode = it.uppercase(Locale.US) }, label = { Text("To") }, modifier = Modifier.weight(1f), singleLine = true)
+                }
+                Button(onClick = {
+                    loading = true
+                    Executors.newSingleThreadExecutor().execute {
+                        val response = api.trainsBetween(fromCode, toCode, live = true)
+                        Handler(Looper.getMainLooper()).post { result = response; loading = false }
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text("FIND TRAINS") }
+            }
         }
 
+        result?.let { response -> ApiResultCard(response) }
+
         Card(shape = RoundedCornerShape(20.dp)) {
-            Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("More rail APIs are wired", fontWeight = FontWeight.Bold)
-                Text("Station search: /api/train/stations", fontSize = 12.sp)
-                Text("Trains between stations: /api/train/between", fontSize = 12.sp)
-                Text("Live train: /api/train", fontSize = 12.sp)
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Rail API coverage", fontWeight = FontWeight.Bold)
+                Text("Live train • station live board • station timetable • trains between stations", fontSize = 12.sp)
+                Text("Route geometry • seats • coach position • station search • train directories • filters", fontSize = 12.sp)
             }
         }
     }
 }
-
 @Composable
 private fun WeatherScreen(api: ApiClient, destination: Destination?) {
     var lat by remember { mutableStateOf(destination?.latitude?.toString() ?: "25.2138") }

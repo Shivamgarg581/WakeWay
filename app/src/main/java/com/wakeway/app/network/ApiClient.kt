@@ -211,11 +211,47 @@ class ApiClient(context: Context) {
             query = mapOf("train" to number, "station" to station)
         )
 
-    fun stationLive(code: String, hours: String = "4"): JSONObject =
+    fun stationLive(
+        code: String,
+        hours: String = "4",
+        includeIntermediate: Boolean = false
+    ): JSONObject =
         get(
             "/api/train/station-live",
-            query = mapOf("code" to code, "hours" to hours)
+            query = mapOf(
+                "code" to code,
+                "hours" to hours,
+                "includeIntermediate" to includeIntermediate.toString()
+            )
         )
+
+    fun stationBoard(code: String, includeIntermediate: Boolean = false): JSONObject =
+        get(
+            "/api/train/station-board",
+            query = mapOf(
+                "code" to code,
+                "includeIntermediate" to includeIntermediate.toString()
+            )
+        )
+
+    fun stationDirectory(ntes: Boolean = false): JSONObject =
+        get(if (ntes) "/api/train/stations-ntes" else "/api/train/stations-directory")
+
+    fun trainDirectory(variant: String = "prs"): JSONObject =
+        get(
+            when (variant) {
+                "ntes" -> "/api/train/directory-ntes"
+                "compressed" -> "/api/train/directory-compressed"
+                else -> "/api/train/directory"
+            }
+        )
+
+    fun trainFilter(category: String? = null, type: String? = null): JSONObject {
+        val q = mutableMapOf<String, String>()
+        if (!category.isNullOrBlank()) q["category"] = category
+        if (!type.isNullOrBlank()) q["type"] = type
+        return get("/api/train/filter", query = q)
+    }
 
     fun ai(prompt: String): JSONObject =
         post("/api/ai", JSONObject().put("prompt", prompt))
