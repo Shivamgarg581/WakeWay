@@ -20,9 +20,7 @@ jobs:
         run: |
           set -e
           test -f WakeWay-Mobile-Ready.zip
-          rm -f app
-          rm -f build.gradle.kts
-          rm -f proguard-rules.pro
+          rm -f app build.gradle.kts proguard-rules.pro
           rm -rf .wakeway_unpack
           mkdir .wakeway_unpack
           unzip -q WakeWay-Mobile-Ready.zip -d .wakeway_unpack
@@ -30,7 +28,8 @@ jobs:
           rm -rf .wakeway_unpack
           rm -f WakeWay-Mobile-Ready.zip
           rm -f proguard-rules.pro
-          rm -f .github/workflows/expand-wakeway.yml
+          # Keep the repository's temporary workflow only; android.yml will be added separately.
+          rm -f .github/workflows/android.yml
 
       - name: Commit expanded project
         shell: bash
