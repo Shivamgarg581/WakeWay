@@ -8,7 +8,6 @@ if (lp.exists()) {
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -23,9 +22,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        buildConfigField("String", "BACKEND_URL", "\"${localProps.getProperty("WAKEWAY_BACKEND_URL", "").replace("\"", "\\\"")}\"")
-        buildConfigField("String", "SUPABASE_URL", "\"${localProps.getProperty("SUPABASE_URL", "").replace("\"", "\\\"")}\"")
-        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"${localProps.getProperty("SUPABASE_PUBLISHABLE_KEY", "").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "BACKEND_URL", "\"" + "$" + "{localProps.getProperty("WAKEWAY_BACKEND_URL", "").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "SUPABASE_URL", "\"" + "$" + "{localProps.getProperty("SUPABASE_URL", "").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"" + "$" + "{localProps.getProperty("SUPABASE_PUBLISHABLE_KEY", "").replace("\"", "\\\"")}\"")
     }
 
     buildFeatures {
@@ -73,3 +72,4 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.19.0")
 }
+
