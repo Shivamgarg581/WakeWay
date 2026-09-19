@@ -8,6 +8,10 @@ on:
       - "backend/**"
       - ".github/workflows/deploy-backend.yml"
 
+concurrency:
+  group: wakeway-backend-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
