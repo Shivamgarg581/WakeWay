@@ -1913,64 +1913,232 @@ private fun TrainScreen(api: ApiClient) {
 private fun WeatherScreen(api: ApiClient, destination: Destination?) {
     var lat by remember { mutableStateOf(destination?.latitude?.toString() ?: "25.2138") }
     var lon by remember { mutableStateOf(destination?.longitude?.toString() ?: "75.8648") }
+    var locationName by remember { mutableStateOf(destination?.name ?: "Kota") }
     var result by remember { mutableStateOf<JSONObject?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    fun loadWeather() {
+        val latitude = lat.toDoubleOrNull()
+        val longitude = lon.toDoubleOrNull()
+        if (latitude == null || longitude == null ||
+            latitude !in -90.0..90.0 || longitude !in -180.0..180.0
+        ) {
+            message = "Enter valid coordinates."
+            return
+        }
+        loading = true
+        message = ""
+        Executors.newSingleThreadExecutor().execute {
+            val response = api.weather(latitude, longitude)
+            Handler(Looper.getMainLooper()).post {
+                result = response
+                loading = false
+                if (response.has("error")) {
+                    message = apiFriendlyError(response, "Weather service unavailable.")
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(destination?.latitude, destination?.longitude) {
+        if (destination != null) {
+            lat = destination.latitude.toString()
+            lon = destination.longitude.toString()
+            locationName = destination.name
+            loadWeather()
+        }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Weather at destination", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Text("Current conditions plus a short forecast.")
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(lat, { lat = it }, label = { Text("Latitude") }, modifier = Modifier.weight(1f), singleLine = true)
-            OutlinedTextField(lon, { lon = it }, label = { Text("Longitude") }, modifier = Modifier.weight(1f), singleLine = true)
+        item {
+            Text("Weather", fontSize = 31.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                "Destination conditions and a short forecast.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
-        Button(
-            onClick = {
-                val latitude = lat.toDoubleOrNull()
-                val longitude = lon.toDoubleOrNull()
-                if (latitude == null || longitude == null) return@Button
-
-                loading = true
-                Executors.newSingleThreadExecutor().execute {
-                    val response = api.weather(latitude, longitude)
-                    Handler(Looper.getMainLooper()).post {
-                        result = response
-                        loading = false
+        item {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Row(
+                    Modifier.padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(15.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Cloud,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(11.dp).size(27.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("DESTINATION", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(locationName, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                        Text(
+                            "Live conditions + 3-day forecast",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { loadWeather() }) {
+                        if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
                     }
                 }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            else Text("GET WEATHER")
+            }
         }
 
         result?.let { response ->
             val current = response.optJSONObject("current")
             if (current != null) {
-                ElevatedCard(shape = RoundedCornerShape(24.dp)) {
-                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            current.optDouble("temperature_2m", Double.NaN).let {
-                                if (it.isNaN()) "—" else String.format(Locale.US, "%.1f°C", it)
-                            },
-                            fontSize = 35.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Text("Feels like " + current.optDouble("apparent_temperature", 0.0) + "°C")
-                        Text("Humidity " + current.optInt("relative_humidity_2m", 0) + "%")
-                        Text("Wind " + current.optDouble("wind_speed_10m", 0.0) + " km/h")
-                        Text("Precipitation " + current.optDouble("precipitation", 0.0) + " mm")
+                item {
+                    ElevatedCard(shape = RoundedCornerShape(28.dp)) {
+                        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    val temp = current.optDouble("temperature_2m", Double.NaN)
+                                    val feels = current.optDouble("apparent_temperature", Double.NaN)
+                                    Text(
+                                        if (temp.isNaN()) "—" else String.format(Locale.US, "%.0f°", temp),
+                                        fontSize = 52.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    Text(
+                                        if (feels.isNaN()) "Feels like —"
+                                        else "Feels like " + String.format(Locale.US, "%.0f°", feels)
+                                    )
+                                }
+                                Text(weatherEmoji(current.optInt("weather_code", -1)), fontSize = 42.sp)
+                            }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                WeatherMetric(
+                                    "Humidity",
+                                    current.optInt("relative_humidity_2m", 0).toString() + "%",
+                                    Modifier.weight(1f)
+                                )
+                                WeatherMetric(
+                                    "Wind",
+                                    String.format(Locale.US, "%.0f km/h", current.optDouble("wind_speed_10m", 0.0)),
+                                    Modifier.weight(1f)
+                                )
+                                WeatherMetric(
+                                    "Rain",
+                                    String.format(Locale.US, "%.1f mm", current.optDouble("precipitation", 0.0)),
+                                    Modifier.weight(1f)
+                                )
+                            }
+                        }
                     }
                 }
             }
-            ApiResultCard(response, skipKeys = setOf("current", "hourly", "daily", "latitude", "longitude", "timezone"))
+
+            val daily = response.optJSONObject("daily")
+            if (daily != null) {
+                item { SectionTitle("Next 3 days") }
+                val dates = daily.optJSONArray("time") ?: JSONArray()
+                val codes = daily.optJSONArray("weather_code") ?: JSONArray()
+                val highs = daily.optJSONArray("temperature_2m_max") ?: JSONArray()
+                val lows = daily.optJSONArray("temperature_2m_min") ?: JSONArray()
+                for (i in 0 until minOf(3, dates.length())) {
+                    item {
+                        Card(shape = RoundedCornerShape(20.dp)) {
+                            Row(
+                                Modifier.padding(15.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(weatherEmoji(codes.optInt(i, -1)), fontSize = 28.sp)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(dates.optString(i), fontWeight = FontWeight.Bold)
+                                    val hi = highs.optDouble(i, Double.NaN)
+                                    val lo = lows.optDouble(i, Double.NaN)
+                                    Text(
+                                        "High " + (if (hi.isNaN()) "—" else String.format(Locale.US, "%.0f°", hi)) +
+                                            " • Low " + (if (lo.isNaN()) "—" else String.format(Locale.US, "%.0f°", lo)),
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Coordinates", fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = lat,
+                            onValueChange = { lat = it },
+                            label = { Text("Latitude") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = lon,
+                            onValueChange = { lon = it },
+                            label = { Text("Longitude") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = { loadWeather() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("REFRESH WEATHER")
+                    }
+                }
+            }
+        }
+
+        if (message.isNotBlank()) item { ApiPlainCard(message) }
+    }
+}
+
+@Composable
+private fun WeatherMetric(label: String, value: String, modifier: Modifier) {
+    Card(modifier = modifier, shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(11.dp)) {
+            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontWeight = FontWeight.Bold)
         }
     }
+}
+
+private fun weatherEmoji(code: Int): String = when (code) {
+    0 -> "☀️"
+    1, 2 -> "🌤️"
+    3 -> "☁️"
+    45, 48 -> "🌫️"
+    51, 53, 55, 56, 57 -> "🌦️"
+    61, 63, 65, 66, 67 -> "🌧️"
+    71, 73, 75, 77 -> "🌨️"
+    80, 81, 82 -> "⛈️"
+    85, 86 -> "🌨️"
+    95, 96, 99 -> "⛈️"
+    else -> "🌦️"
 }
 
 @Composable
