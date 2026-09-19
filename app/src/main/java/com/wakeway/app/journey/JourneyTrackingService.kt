@@ -127,6 +127,14 @@ class JourneyTrackingService : Service(), LocationListener {
         updateNotification(
             formatDistance(distance) + etaText + " • accuracy ±" + location.accuracy.toInt() + "m"
         )
+        store.saveTrackingSnapshot(
+            distanceMeters = distance,
+            etaMinutes = if (speedKmh >= 3f) {
+                ((distance / 1000.0) / speedKmh * 60.0).toInt().coerceAtLeast(1)
+            } else null,
+            speedKmh = speedKmh.toDouble(),
+            accuracyMeters = location.accuracy
+        )
         syncLocation(journey, location)
 
         val distanceAlerts = journey.alerts
@@ -185,6 +193,7 @@ class JourneyTrackingService : Service(), LocationListener {
                 store.addHistory(completed)
             }
             syncJourney(completed)
+            store.clearTrackingSnapshot()
             store.clearActiveJourney()
             cloudExecutor.execute {
                 runCatching { api.endJourney(journey.id, "completed", store.accessToken()) }
@@ -319,6 +328,7 @@ class JourneyTrackingService : Service(), LocationListener {
                 runCatching { api.endJourney(it.id, "cancelled", store.accessToken()) }
             }
         }
+        store.clearTrackingSnapshot()
         store.clearActiveJourney()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
