@@ -49,6 +49,31 @@ class LocalStore(context: Context) {
         prefs.edit().remove("access_token").apply()
     }
 
+    fun saveTrackingSnapshot(
+        distanceMeters: Double,
+        etaMinutes: Int?,
+        speedKmh: Double,
+        accuracyMeters: Float
+    ) {
+        val json = JSONObject().apply {
+            put("distance_m", distanceMeters)
+            if (etaMinutes == null) put("eta_min", JSONObject.NULL) else put("eta_min", etaMinutes)
+            put("speed_kmh", speedKmh)
+            put("accuracy_m", accuracyMeters)
+            put("updated_at", System.currentTimeMillis())
+        }
+        prefs.edit().putString("tracking_snapshot", json.toString()).apply()
+    }
+
+    fun trackingSnapshot(): JSONObject? =
+        prefs.getString("tracking_snapshot", null)?.let { raw ->
+            runCatching { JSONObject(raw) }.getOrNull()
+        }
+
+    fun clearTrackingSnapshot() {
+        prefs.edit().remove("tracking_snapshot").apply()
+    }
+
     fun saveSetting(key: String, value: String) {
         prefs.edit().putString("setting_$key", value).apply()
     }
