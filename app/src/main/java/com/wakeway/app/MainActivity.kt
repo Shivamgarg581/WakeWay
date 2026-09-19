@@ -1917,7 +1917,7 @@ private fun TrainScreen(api: ApiClient) {
         if (message.isNotBlank()) item { ApiPlainCard(message) }
 
         result?.let { response ->
-            ApiResultCard(response)
+            item { ApiResultCard(response) }
         }
 
         item {
