@@ -214,6 +214,32 @@ class ApiClient(context: Context) {
             )
         )
 
+    fun trainFare(
+        number: String,
+        source: String,
+        destination: String,
+        journeyDate: String,
+        classCode: String = "SL",
+        quotaCode: String = "GN"
+    ): JSONObject =
+        get(
+            "/api/train/fare",
+            query = mapOf(
+                "train" to number,
+                "source" to source,
+                "destination" to destination,
+                "journeyDate" to journeyDate,
+                "classCode" to classCode,
+                "quotaCode" to quotaCode
+            )
+        )
+
+    fun pnrPrediction(pnr: String): JSONObject =
+        get("/api/pnr/prediction", query = mapOf("pnr" to pnr))
+
+    fun pnrRefund(pnr: String): JSONObject =
+        get("/api/pnr/refund", query = mapOf("pnr" to pnr))
+
     fun trainCoaches(number: String, station: String): JSONObject =
         get(
             "/api/train/coaches",
