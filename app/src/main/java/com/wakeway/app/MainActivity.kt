@@ -2573,20 +2573,47 @@ private fun AuthRequiredCard(message: String) {
     }
 }
 
+private fun apiFriendlyError(response: JSONObject, fallback: String): String {
+    val status = response.optInt("http_status", 0)
+    val error = response.optString("error").ifBlank { response.optString("message") }
+    return when {
+        status == 401 -> "Your session has expired. Please sign in again."
+        status == 403 -> "This action is not allowed for this account."
+        status == 404 -> "WakeWay endpoint was not found. Check the backend URL and deployment."
+        status == 429 -> "This service is temporarily rate-limited. Try again shortly."
+        status >= 500 -> "WakeWay server is having trouble. Try again shortly."
+        error.isNotBlank() -> error
+        else -> fallback
+    }
+}
+
 @Composable
 private fun ApiResultCard(response: JSONObject, skipKeys: Set<String> = emptySet()) {
-    val text = response.toString(2)
-    Card(shape = RoundedCornerShape(20.dp)) {
-        Column(Modifier.padding(16.dp)) {
+    val copy = JSONObject(response.toString())
+    skipKeys.forEach { copy.remove(it) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (response.has("error")) Icons.Outlined.ErrorOutline else Icons.Outlined.CheckCircle,
+                    contentDescription = null,
+                    tint = if (response.has("error")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (response.has("error")) "Service response" else "Live response",
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Text(
-                if (response.has("error")) "Service response" else "Live response",
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(7.dp))
-            Text(
-                text,
+                copy.toString(2),
                 fontSize = 11.sp,
-                modifier = Modifier.verticalScroll(rememberScrollState())
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
             )
         }
     }
@@ -2594,7 +2621,10 @@ private fun ApiResultCard(response: JSONObject, skipKeys: Set<String> = emptySet
 
 @Composable
 private fun ApiPlainCard(message: String) {
-    Card(shape = RoundedCornerShape(18.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp)
+    ) {
         Text(message, Modifier.padding(16.dp))
     }
 }
@@ -2602,43 +2632,167 @@ private fun ApiPlainCard(message: String) {
 @Composable
 private fun MapScreen(destination: Destination?) {
     val context = LocalContext.current
+    var mapLoading by remember { mutableStateOf(true) }
+    var mapError by remember { mutableStateOf(false) }
+
     val webView = remember {
         android.webkit.WebView(context).apply {
+            setBackgroundColor(android.graphics.Color.WHITE)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.loadsImagesAutomatically = true
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            webViewClient = object : android.webkit.WebViewClient() {
+                override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                    mapLoading = false
+                    view?.evaluateJavascript(
+                        "try { if (window.map) setTimeout(function(){ map.invalidateSize(); }, 250); } catch(e) {}",
+                        null
+                    )
+                }
+
+                override fun onReceivedError(
+                    view: android.webkit.WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                    error: android.webkit.WebResourceError?
+                ) {
+                    if (request?.isForMainFrame == true) {
+                        mapLoading = false
+                        mapError = true
+                    }
+                }
+            }
         }
     }
 
-    AndroidView(
-        factory = { webView },
-        modifier = Modifier.fillMaxSize(),
-        update = { view ->
-            val lat = destination?.latitude ?: 25.2138
-            val lon = destination?.longitude ?: 75.8648
-            val label = (destination?.name ?: "Destination").replace("'", "\\\\'")
-            val html = """
-                <!doctype html>
-                <html>
-                <head>
-                    <meta name="viewport" content="width=device-width,initial-scale=1">
-                    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-                    <style>html,body,#map{height:100%;margin:0}</style>
-                </head>
-                <body>
-                  <div id="map"></div>
-                  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-                  <script>
-                    const map = L.map('map').setView([$lat,$lon], 13);
-                    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                      maxZoom: 19,
-                      attribution: '© OpenStreetMap contributors'
-                    }).addTo(map);
-                    L.marker([$lat,$lon]).addTo(map).bindPopup('$label').openPopup();
-                  </script>
-                </body>
-                </html>
-            """.trimIndent()
-            view.loadDataWithBaseURL("https://localhost/", html, "text/html", "UTF-8", null)
+    val lat = destination?.latitude ?: 25.2138
+    val lon = destination?.longitude ?: 75.8648
+    val label = (destination?.name?.takeIf { it.isNotBlank() } ?: "Destination")
+        .replace("\\", "\\\\")
+        .replace("'", "\\'")
+
+    Box(Modifier.fillMaxSize()) {
+        AndroidView(
+            factory = { webView },
+            modifier = Modifier.fillMaxSize(),
+            update = { view ->
+                mapLoading = true
+                mapError = false
+                val html = """
+                    <!doctype html>
+                    <html>
+                    <head>
+                      <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+                      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+                      <style>
+                        html,body,#map{height:100%;width:100%;margin:0;background:#f4f6f9}
+                        .leaflet-control-attribution{font-size:10px}
+                      </style>
+                    </head>
+                    <body>
+                      <div id="map"></div>
+                      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                      <script>
+                        window.map = L.map('map', { zoomControl: true }).setView([${lat},${lon}], 13);
+                        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                          maxZoom: 19,
+                          attribution: '© OpenStreetMap contributors'
+                        }).addTo(window.map);
+                        L.marker([${lat},${lon}]).addTo(window.map).bindPopup('${label}').openPopup();
+                        setTimeout(function(){ window.map.invalidateSize(); }, 500);
+                      </script>
+                    </body>
+                    </html>
+                """.trimIndent()
+                view.loadDataWithBaseURL(
+                    "https://wakeway-map.local/",
+                    html,
+                    "text/html",
+                    "UTF-8",
+                    null
+                )
+            }
+        )
+
+        if (mapLoading) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 3.dp
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(9.dp))
+                    Text("Loading map…", fontSize = 12.sp)
+                }
+            }
         }
-    )
+
+        if (destination != null) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp)
+            ) {
+                Row(
+                    Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.LocationOn, contentDescription = null)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(destination.name, fontWeight = FontWeight.Bold)
+                        Text(
+                            destination.address,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            val uri = android.net.Uri.parse(
+                                "geo:${destination.latitude},${destination.longitude}?q=${destination.latitude},${destination.longitude}(" +
+                                    java.net.URLEncoder.encode(destination.name, "UTF-8") + ")"
+                            )
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Outlined.ArrowForward, contentDescription = "Open in maps")
+                    }
+                }
+            }
+        }
+
+        if (mapError) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(28.dp),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(
+                    Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(Icons.Outlined.Map, contentDescription = null, modifier = Modifier.size(42.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text("Map tiles couldn't load", fontWeight = FontWeight.Bold)
+                    Text(
+                        "The destination is still valid. Use the maps button to open your maps app.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
 }
