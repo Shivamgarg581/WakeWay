@@ -120,7 +120,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 private enum class Screen {
-    HOME, SETUP, ACTIVE, HISTORY, EXPLORE, TRAIN, WEATHER, AI, FAMILY, FRIENDS, CHAT, ACCOUNT, SETTINGS, PREMIUM, MAP
+    HOME, SETUP, ACTIVE, HISTORY, EXPLORE, TRAIN, WEATHER, AI, FAMILY, FRIENDS, CHAT, ACCOUNT, SETTINGS, PREMIUM, MAP, SAVED_PLACES
 }
 
 class MainActivity : ComponentActivity() {
@@ -293,6 +293,7 @@ private fun WakeWayApp() {
                                 Screen.SETTINGS -> "Settings"
                                 Screen.PREMIUM -> "Premium"
                                 Screen.MAP -> "Destination map"
+                                Screen.SAVED_PLACES -> "Saved places"
                             },
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp
@@ -417,6 +418,10 @@ private fun WakeWayApp() {
                 )
 
                 Screen.PREMIUM -> PremiumScreen(api, store)
+                Screen.SAVED_PLACES -> SavedPlacesScreen(api, store) { destination ->
+                    selectedDestination = destination
+                    screen = Screen.SETUP
+                }
                 Screen.MAP -> MapScreen(selectedDestination)
             }
         }
@@ -673,6 +678,41 @@ private fun HomeScreen(
                     subtitle = "More control",
                     modifier = Modifier.weight(1f)
                 ) { onOpen(Screen.PREMIUM) }
+            }
+        }
+
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                onClick = { onOpen(Screen.ACCOUNT) }
+            ) {
+                Row(
+                    Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Icon(
+                            Icons.Outlined.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(9.dp).size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Quick account access", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Sign up or sign in to unlock cloud sync, friends and family.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(Icons.Outlined.ArrowForward, contentDescription = null)
+                }
             }
         }
 
@@ -1590,6 +1630,13 @@ private fun ExploreScreen(
                 FeatureCard(Icons.Outlined.Person, "Account", "Profile & sync", Modifier.weight(1f)) {
                     onOpen(Screen.ACCOUNT)
                 }
+            }
+        }
+
+        item { SectionTitle("Your places") }
+        item {
+            FeatureCard(Icons.Outlined.LocationOn, "Saved places", "Quick destinations", Modifier.fillMaxWidth()) {
+                onOpen(Screen.SAVED_PLACES)
             }
         }
 
@@ -2676,6 +2723,136 @@ private fun ProviderPill(label: String, enabled: Boolean) {
         },
         label = { Text(label, fontSize = 11.sp) }
     )
+}
+
+@Composable
+private fun SavedPlacesScreen(
+    api: ApiClient,
+    store: LocalStore,
+    onSelect: (Destination) -> Unit
+) {
+    val token = store.accessToken()
+    var places by remember { mutableStateOf(JSONArray()) }
+    var loading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+
+    if (token.isNullOrBlank()) {
+        AuthRequiredCard("Sign in to save and manage destinations.")
+        return
+    }
+
+    fun load() {
+        loading = true
+        Executors.newSingleThreadExecutor().execute {
+            val response = api.savedPlaces(token)
+            Handler(Looper.getMainLooper()).post {
+                loading = false
+                if (response.has("error")) {
+                    message = apiFriendlyError(response, "Could not load saved places.")
+                } else {
+                    places = if (response.optJSONArray("data") != null) {
+                        response.optJSONArray("data")!!
+                    } else if (response.optJSONArray("places") != null) {
+                        response.optJSONArray("places")!!
+                    } else {
+                        response.optJSONArray("results") ?: JSONArray()
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { load() }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Saved places", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "Keep the destinations you use most often one tap away.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = { load() }) {
+                    if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
+                }
+            }
+        }
+
+        if (message.isNotBlank()) {
+            item { ApiPlainCard(message) }
+        }
+
+        if (places.length() == 0 && !loading) {
+            item {
+                Card(shape = RoundedCornerShape(24.dp)) {
+                    Column(
+                        Modifier.padding(24.dp).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Outlined.LocationOn, contentDescription = null, modifier = Modifier.size(46.dp))
+                        Text("No saved places yet", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            "Open Set destination, choose a prediction, then tap Save.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        } else {
+            for (i in 0 until places.length()) {
+                val row = places.optJSONObject(i) ?: continue
+                val destination = Destination(
+                    row.optString("name"),
+                    row.optString("address"),
+                    row.optDouble("latitude"),
+                    row.optDouble("longitude")
+                )
+                item {
+                    ElevatedCard(
+                        onClick = { onSelect(destination) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(13.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Icon(
+                                    Icons.Outlined.LocationOn,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(9.dp).size(21.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(destination.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Text(
+                                    destination.address,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text("›", fontSize = 28.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
