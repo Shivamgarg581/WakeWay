@@ -1184,8 +1184,8 @@ private fun SetupScreen(
                             } else if (search.isNotBlank()) {
                                 IconButton(onClick = {
                                     search = ""
-                                    selected = null
-                                    onDestination(Destination("", "", 0.0, 0.0))
+                                    results = emptyList()
+                                    message = ""
                                 }) {
                                     Icon(Icons.Outlined.Close, contentDescription = "Clear")
                                 }
