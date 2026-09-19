@@ -489,6 +489,28 @@ async function trainSeats(request, env) {
   return railRadar(request, env, number => "/v1/trains/" + encodeURIComponent(number) + "/seats?" + params.toString());
 }
 
+async function trainFare(request, env) {
+  const u = new URL(request.url);
+  const train = String(u.searchParams.get("train") || "").trim();
+  const source = String(u.searchParams.get("source") || u.searchParams.get("from") || "").trim().toUpperCase();
+  const destination = String(u.searchParams.get("destination") || u.searchParams.get("to") || "").trim().toUpperCase();
+  const journeyDate = String(u.searchParams.get("journeyDate") || u.searchParams.get("date") || "").trim();
+  const classCode = String(u.searchParams.get("classCode") || u.searchParams.get("class") || "SL").trim().toUpperCase();
+  const quotaCode = String(u.searchParams.get("quotaCode") || u.searchParams.get("quota") || "GN").trim().toUpperCase();
+  if (!/^\d{5}$/.test(train) || !source || !destination || !/^\d{4}-\d{2}-\d{2}$/.test(journeyDate) || !classCode) {
+    return json({ error: "train (5 digits), source, destination, journeyDate (YYYY-MM-DD), and classCode are required" }, 400);
+  }
+  const params = new URLSearchParams({ source, destination, journeyDate, classCode, quotaCode });
+  return railRadar(request, env, number => "/v1/trains/" + encodeURIComponent(number) + "/fare?" + params.toString());
+}
+
+async function pnrProxy(request, env, action) {
+  const u = new URL(request.url);
+  const pnr = String(u.searchParams.get("pnr") || "").trim();
+  if (!/^\d{10}$/.test(pnr)) return json({ error: "Enter a valid 10-digit PNR" }, 400);
+  return railRadar(request, env, () => "/v1/pnr/" + encodeURIComponent(pnr) + "/" + action);
+}
+
 async function trainCoach(request, env) {
   const u = new URL(request.url);
   const train = String(u.searchParams.get("train") || "").trim();
@@ -1024,7 +1046,7 @@ async function subscription(request, env) {
 async function config(env) {
   return json({
     service: "wakeway-api",
-    version: "0.2.0",
+    version: "0.3.0",
     providers: {
       supabase: Boolean(env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY && env.SUPABASE_SERVICE_ROLE_KEY),
       gemini: Boolean(env.GEMINI_API_KEY),
@@ -1047,6 +1069,9 @@ async function config(env) {
       "/api/train/between",
       "/api/train/route",
       "/api/train/seats",
+      "/api/train/fare",
+      "/api/pnr/prediction",
+      "/api/pnr/refund",
       "/api/train/coaches",
       "/api/train/station-live",
       "/api/train/station-board",
@@ -1079,7 +1104,7 @@ export default {
         return json({
           ok: true,
           service: "wakeway-api",
-          version: "0.2.0",
+          version: "0.3.0",
           time: new Date().toISOString()
         }, 200, { "cache-control": "no-store" });
       }
@@ -1104,6 +1129,9 @@ export default {
       if (p === "/api/train/between" && request.method === "GET") return trainBetween(request, env);
       if (p === "/api/train/route" && request.method === "GET") return trainRoute(request, env);
       if (p === "/api/train/seats" && request.method === "GET") return trainSeats(request, env);
+      if (p === "/api/train/fare" && request.method === "GET") return trainFare(request, env);
+      if (p === "/api/pnr/prediction" && request.method === "GET") return pnrProxy(request, env, "prediction");
+      if (p === "/api/pnr/refund" && request.method === "GET") return pnrProxy(request, env, "refund");
       if (p === "/api/train/coaches" && request.method === "GET") return trainCoach(request, env);
       if (p === "/api/train/station-live" && request.method === "GET") return trainStationLive(request, env);
       if (p === "/api/train/station-board" && request.method === "GET") return stationBoard(request, env);
