@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -258,8 +259,8 @@ private fun WakeWayApp() {
                         }
                     ) {
                         Icon(
-                            if (screen == Screen.HOME) Icons.Outlined.Settings else Icons.Outlined.ArrowForward,
-                            contentDescription = if (screen == Screen.HOME) "Settings" else "Home",
+                            if (screen == Screen.HOME) Icons.Outlined.Settings else Icons.Outlined.ArrowBack,
+                            contentDescription = if (screen == Screen.HOME) "Settings" else "Back",
                             modifier = if (screen == Screen.HOME) Modifier else Modifier.size(24.dp)
                         )
                     }
@@ -1651,25 +1652,110 @@ private fun ExploreScreen(
 ) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Text("Travel tools", fontSize = 29.sp, fontWeight = FontWeight.Bold)
+            Text("Explore", fontSize = 31.sp, fontWeight = FontWeight.ExtraBold)
             Text(
-                if (backendOnline) "Cloud services are reachable." else "Core alarm works without cloud services.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                "Your journey, tools and travel support in one place.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
             )
         }
 
-        item { ToolRow("🚆", "Live trains", "Running status, stations and route APIs", Screen.TRAIN, onOpen) }
-        item { ToolRow("🌦", "Weather", "Current conditions and a 3-day forecast", Screen.WEATHER, onOpen) }
-        item { ToolRow("🤖", "WakeWay AI", "Trip planning and travel questions", Screen.AI, onOpen) }
-        item { ToolRow("👥", "Friends", "Requests, blocks and reports", Screen.FRIENDS, onOpen) }
-        item { ToolRow("👨‍👩‍👧", "Family", "Invite and private location sharing", Screen.FAMILY, onOpen) }
-        item { ToolRow("💬", "Chat", "1-to-1 conversation backend", Screen.CHAT, onOpen) }
-        item { ToolRow("⭐", "Premium", "Subscription-ready architecture", Screen.PREMIUM, onOpen) }
-        item { ToolRow("👤", "Account", "Sign in and sync your profile", Screen.ACCOUNT, onOpen) }
+        item {
+            Card(
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (backendOnline)
+                        MaterialTheme.colorScheme.secondaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        if (backendOnline) Icons.Outlined.CheckCircle else Icons.Outlined.Cloud,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            if (backendOnline) "Cloud features connected" else "Local-first mode",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            if (backendOnline) "AI, account, social and rail services are available from the backend."
+                            else "Your destination alarm still works without cloud services.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        item { SectionTitle("Travel") }
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FeatureCard(Icons.Outlined.DirectionsRailway, "Trains", "Live rail", Modifier.weight(1f)) {
+                    onOpen(Screen.TRAIN)
+                }
+                FeatureCard(Icons.Outlined.Cloud, "Weather", "Forecast", Modifier.weight(1f)) {
+                    onOpen(Screen.WEATHER)
+                }
+            }
+        }
+
+        item { SectionTitle("People & assistant") }
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FeatureCard(Icons.Outlined.AutoAwesome, "AI", "Travel co-pilot", Modifier.weight(1f)) {
+                    onOpen(Screen.AI)
+                }
+                FeatureCard(Icons.Outlined.FamilyRestroom, "Family", "Private sharing", Modifier.weight(1f)) {
+                    onOpen(Screen.FAMILY)
+                }
+            }
+        }
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FeatureCard(Icons.Outlined.Group, "Friends", "Requests", Modifier.weight(1f)) {
+                    onOpen(Screen.FRIENDS)
+                }
+                FeatureCard(Icons.Outlined.Person, "Account", "Profile & sync", Modifier.weight(1f)) {
+                    onOpen(Screen.ACCOUNT)
+                }
+            }
+        }
+
+        item { SectionTitle("More") }
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FeatureCard(Icons.Outlined.StarOutline, "Premium", "Plan-ready", Modifier.weight(1f)) {
+                    onOpen(Screen.PREMIUM)
+                }
+                FeatureCard(Icons.Outlined.Map, "Map", "Destination", Modifier.weight(1f)) {
+                    onOpen(Screen.MAP)
+                }
+            }
+        }
     }
 }
 
