@@ -324,7 +324,14 @@ class ApiClient(context: Context) {
         } ?: "{}"
 
         return runCatching {
-            JSONObject(content).put("http_status", code)
+            val trimmed = content.trim()
+            if (trimmed.startsWith("[")) {
+                JSONObject().put("data", JSONArray(trimmed)).put("http_status", code)
+            } else if (trimmed.isBlank()) {
+                JSONObject().put("http_status", code)
+            } else {
+                JSONObject(trimmed).put("http_status", code)
+            }
         }.getOrElse {
             JSONObject().put("http_status", code).put("raw", content)
         }
