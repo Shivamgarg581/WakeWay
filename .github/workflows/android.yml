@@ -6,6 +6,10 @@ on:
     branches: [ main ]
   pull_request:
 
+concurrency:
+  group: wakeway-android-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
