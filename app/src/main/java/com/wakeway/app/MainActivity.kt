@@ -1852,46 +1852,125 @@ private fun WeatherScreen(api: ApiClient, destination: Destination?) {
 @Composable
 private fun AiScreen(api: ApiClient) {
     var prompt by remember { mutableStateOf("") }
-    var answer by remember { mutableStateOf("Ask about planning, packing, trip timing or how WakeWay works.") }
+    var answer by remember { mutableStateOf("I'm ready. Ask about your destination, timing, packing, routes or how WakeWay works.") }
     var loading by remember { mutableStateOf(false) }
+    val examples = listOf(
+        "What should I pack?",
+        "How early should I leave?",
+        "Help me plan this journey"
+    )
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("WakeWay AI", fontSize = 29.sp, fontWeight = FontWeight.Bold)
-        Text("AI stays behind the backend so your provider key is not shipped in the APK.")
-
-        OutlinedTextField(
-            prompt,
-            { prompt = it },
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 4,
-            label = { Text("Ask anything about this journey") }
-        )
-
-        Button(
-            onClick = {
-                if (prompt.isBlank()) return@Button
-                loading = true
-                Executors.newSingleThreadExecutor().execute {
-                    val response = api.ai(prompt)
-                    Handler(Looper.getMainLooper()).post {
-                        answer = response.optString("answer", response.optString("error", "No response"))
-                        loading = false
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Row(
+                    Modifier.padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                    ) {
+                        Icon(
+                            Icons.Outlined.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(12.dp).size(28.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("WakeWay AI", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            "Your travel co-pilot, behind the secure backend.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            else Text("ASK WAKEWAY")
+            }
         }
 
-        Card(shape = RoundedCornerShape(22.dp)) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Assistant", fontWeight = FontWeight.Bold)
-                Text(answer)
+        item {
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    OutlinedTextField(
+                        value = prompt,
+                        onValueChange = { prompt = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 4,
+                        shape = RoundedCornerShape(18.dp),
+                        label = { Text("Ask WakeWay anything") },
+                        placeholder = { Text("e.g. Is this destination good for an evening arrival?") },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                        }
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        examples.forEach { example ->
+                            AssistChip(
+                                onClick = { prompt = example },
+                                label = { Text(example, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val question = prompt.trim()
+                            if (question.isBlank()) return@Button
+                            loading = true
+                            Executors.newSingleThreadExecutor().execute {
+                                val response = api.ai(question)
+                                Handler(Looper.getMainLooper()).post {
+                                    loading = false
+                                    answer = if (response.optString("answer").isNotBlank()) {
+                                        response.optString("answer")
+                                    } else {
+                                        apiFriendlyError(response, "No answer returned. Check the backend AI provider.")
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(17.dp)
+                    ) {
+                        if (loading) {
+                            CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Outlined.ArrowForward, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("ASK WAKEWAY")
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                )
+            ) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Assistant", fontWeight = FontWeight.Bold)
+                    }
+                    Text(answer)
+                }
             }
         }
     }
@@ -2238,6 +2317,7 @@ private fun AccountScreen(
     var username by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
     var signedIn by remember { mutableStateOf(!store.accessToken().isNullOrBlank()) }
 
     LaunchedEffect(signedIn) {
@@ -2247,97 +2327,199 @@ private fun AccountScreen(
                 Handler(Looper.getMainLooper()).post {
                     username = profile.optString("username")
                     displayName = profile.optString("display_name")
+                    if (profile.has("error")) message = apiFriendlyError(profile, "Could not load your profile.")
                 }
             }
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Account", fontSize = 29.sp, fontWeight = FontWeight.Bold)
-        Text(
-            "Email authentication uses Supabase through the Worker. No provider secret belongs in the app.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        if (!signedIn) {
-            OutlinedTextField(email, { email = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Email") })
-            OutlinedTextField(password, { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Password") })
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    Executors.newSingleThreadExecutor().execute {
-                        val response = api.post(
-                            "/api/auth/signup",
-                            JSONObject().put("email", email).put("password", password)
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(26.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer
+            ) {
+                Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(17.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Person,
+                            contentDescription = null,
+                            modifier = Modifier.padding(12.dp).size(28.dp),
+                            tint = MaterialTheme.colorScheme.secondary
                         )
-                        Handler(Looper.getMainLooper()).post {
-                            val token = response.optString("access_token")
-                            if (token.isNotBlank()) {
-                                store.saveAccessToken(token)
-                                signedIn = true
-                            }
-                            message = response.optString(
-                                "message",
-                                response.optString("error", "Check your email if confirmation is enabled.")
-                            )
-                        }
                     }
-                }, modifier = Modifier.weight(1f)) { Text("Sign up") }
-
-                OutlinedButton(onClick = {
-                    Executors.newSingleThreadExecutor().execute {
-                        val response = api.post(
-                            "/api/auth/signin",
-                            JSONObject().put("email", email).put("password", password)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            if (signedIn) "You're signed in" else "Your WakeWay account",
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold
                         )
-                        Handler(Looper.getMainLooper()).post {
-                            val token = response.optString("access_token")
-                            if (token.isNotBlank()) {
-                                store.saveAccessToken(token)
-                                signedIn = true
-                            }
-                            message = response.optString("message", response.optString("error", response.toString()))
-                        }
-                    }
-                }, modifier = Modifier.weight(1f)) { Text("Sign in") }
-            }
-        } else {
-            Text("Signed in", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Username") })
-            OutlinedTextField(displayName, { displayName = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Display name") })
-
-            Button(onClick = {
-                Executors.newSingleThreadExecutor().execute {
-                    val response = api.updateProfile(
-                        JSONObject()
-                            .put("username", username)
-                            .put("display_name", displayName),
-                        store.accessToken()
-                    )
-                    Handler(Looper.getMainLooper()).post {
-                        message = if (response.has("error")) response.optString("error") else "Profile saved."
-                        onProfileUpdated()
+                        Text(
+                            "Cloud sync, friends and family sharing stay behind the Worker.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("SAVE PROFILE")
-            }
-
-            OutlinedButton(onClick = {
-                store.clearAccessToken()
-                signedIn = false
-                username = ""
-                displayName = ""
-                message = "Signed out."
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("SIGN OUT")
             }
         }
 
-        if (message.isNotBlank()) ApiPlainCard(message)
+        if (!signedIn) {
+            item {
+                Card(shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = email,
+                            onValueChange = { email = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Email") },
+                            leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null) }
+                        )
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Password") },
+                            visualTransformation = PasswordVisualTransformation()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    if (email.isBlank() || password.length < 6) {
+                                        message = "Enter a valid email and a password with at least 6 characters."
+                                        return@Button
+                                    }
+                                    busy = true
+                                    Executors.newSingleThreadExecutor().execute {
+                                        val response = api.post(
+                                            "/api/auth/signup",
+                                            JSONObject().put("email", email.trim()).put("password", password)
+                                        )
+                                        Handler(Looper.getMainLooper()).post {
+                                            busy = false
+                                            val token = response.optString("access_token")
+                                            if (token.isNotBlank()) {
+                                                store.saveAccessToken(token)
+                                                signedIn = true
+                                                message = "Account created."
+                                            } else {
+                                                message = apiFriendlyError(
+                                                    response,
+                                                    "Account created. Check your email if confirmation is enabled."
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f).height(50.dp)
+                            ) {
+                                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                else Text("Create account")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    if (email.isBlank() || password.isBlank()) {
+                                        message = "Enter your email and password."
+                                        return@OutlinedButton
+                                    }
+                                    busy = true
+                                    Executors.newSingleThreadExecutor().execute {
+                                        val response = api.post(
+                                            "/api/auth/signin",
+                                            JSONObject().put("email", email.trim()).put("password", password)
+                                        )
+                                        Handler(Looper.getMainLooper()).post {
+                                            busy = false
+                                            val token = response.optString("access_token")
+                                            if (token.isNotBlank()) {
+                                                store.saveAccessToken(token)
+                                                signedIn = true
+                                                message = "Signed in."
+                                            } else {
+                                                message = apiFriendlyError(response, "Could not sign in.")
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f).height(50.dp)
+                            ) { Text("Sign in") }
+                        }
+                    }
+                }
+            }
+        } else {
+            item {
+                Card(shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = username,
+                            onValueChange = { username = it.lowercase().replace(" ", "_") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Username") }
+                        )
+                        OutlinedTextField(
+                            value = displayName,
+                            onValueChange = { displayName = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Display name") }
+                        )
+                        Button(
+                            onClick = {
+                                busy = true
+                                Executors.newSingleThreadExecutor().execute {
+                                    val response = api.updateProfile(
+                                        JSONObject()
+                                            .put("username", username.trim())
+                                            .put("display_name", displayName.trim()),
+                                        store.accessToken()
+                                    )
+                                    Handler(Looper.getMainLooper()).post {
+                                        busy = false
+                                        message = if (response.has("error")) {
+                                            apiFriendlyError(response, "Could not save profile.")
+                                        } else {
+                                            "Profile saved."
+                                        }
+                                        onProfileUpdated()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(50.dp)
+                        ) {
+                            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text("SAVE PROFILE")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                store.clearAccessToken()
+                                signedIn = false
+                                username = ""
+                                displayName = ""
+                                message = "Signed out."
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("SIGN OUT")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (message.isNotBlank()) item { ApiPlainCard(message) }
     }
 }
 
@@ -2350,36 +2532,105 @@ private fun SettingsScreen(
     val context = LocalContext.current
     var backendUrl by remember { mutableStateOf(api.backendUrl()) }
     var status by remember { mutableStateOf("") }
+    var providers by remember { mutableStateOf<JSONObject?>(null) }
+    var checking by remember { mutableStateOf(false) }
     var voice by remember { mutableStateOf(store.setting("voice", "true") == "true") }
     var vibration by remember { mutableStateOf(store.setting("vibration", "true") == "true") }
     var autoShare by remember { mutableStateOf(store.setting("auto_share", "false") == "true") }
     var history by remember { mutableStateOf(store.setting("history", "true") == "true") }
 
+    fun checkBackend() {
+        checking = true
+        Executors.newSingleThreadExecutor().execute {
+            val health = api.health()
+            val config = if (health.optBoolean("ok")) api.config() else JSONObject()
+            Handler(Looper.getMainLooper()).post {
+                checking = false
+                providers = config.optJSONObject("providers")
+                status = if (health.optBoolean("ok")) {
+                    "WakeWay backend is online."
+                } else {
+                    apiFriendlyError(health, "Backend is unavailable.")
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        checkBackend()
+    }
+
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Text("Control centre", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Tune the app without changing the alarm engine.")
+            Text("Control centre", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                "Make WakeWay reliable for long journeys.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (status.contains("online", ignoreCase = true))
+                        MaterialTheme.colorScheme.secondaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (status.contains("online", ignoreCase = true))
+                                Icons.Outlined.CheckCircle
+                            else Icons.Outlined.Cloud,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Service status", fontWeight = FontWeight.Bold)
+                            Text(
+                                status.ifBlank { "Checking services…" },
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = { checkBackend() }) {
+                            if (checking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
+                        }
+                    }
+                    providers?.let { p ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            ProviderPill("Supabase", p.optBoolean("supabase"))
+                            ProviderPill("Gemini", p.optBoolean("gemini"))
+                            ProviderPill("RailRadar", p.optBoolean("railradar"))
+                        }
+                    }
+                }
+            }
         }
 
         item { SectionTitle("Alarm") }
 
         item {
-            Card(shape = RoundedCornerShape(20.dp)) {
+            Card(shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     ToggleRow("Voice announcements", voice) {
                         voice = it
                         store.saveSetting("voice", it.toString())
                     }
-                    Divider()
+                    androidx.compose.material3.HorizontalDivider()
                     ToggleRow("Vibration", vibration) {
                         vibration = it
                         store.saveSetting("vibration", it.toString())
                     }
-                    Divider()
+                    androidx.compose.material3.HorizontalDivider()
                     ToggleRow("Save history", history) {
                         history = it
                         store.saveSetting("history", it.toString())
@@ -2388,89 +2639,82 @@ private fun SettingsScreen(
             }
         }
 
-        item { SectionTitle("Sharing & cloud") }
+        item { SectionTitle("Sharing") }
 
         item {
-            Card(shape = RoundedCornerShape(20.dp)) {
-                Column(Modifier.padding(16.dp)) {
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     ToggleRow("Family location sharing", autoShare) {
                         autoShare = it
                         store.saveSetting("auto_share", it.toString())
                     }
                     Text(
-                        "When enabled, the foreground journey service can send your latest GPS location to your family account every ~30 seconds.",
+                        "When enabled, an active journey can sync your latest GPS location approximately every 30 seconds.",
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 5.dp)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
 
+        item { SectionTitle("Backend") }
+
         item {
             OutlinedTextField(
-                backendUrl,
-                { backendUrl = it },
+                value = backendUrl,
+                onValueChange = { backendUrl = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("WakeWay backend URL") },
                 singleLine = true,
-                placeholder = { Text("https://your-worker.workers.dev") }
+                leadingIcon = { Icon(Icons.Outlined.Cloud, contentDescription = null) }
             )
         }
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = {
-                    api.setBackendUrl(backendUrl)
-                    Executors.newSingleThreadExecutor().execute {
-                        val response = api.health()
-                        Handler(Looper.getMainLooper()).post {
-                            status = if (response.optBoolean("ok")) {
-                                "Connected successfully."
-                            } else {
-                                response.optString("error", "Backend did not respond as expected.")
+                Button(
+                    onClick = {
+                        api.setBackendUrl(backendUrl.trim())
+                        checkBackend()
+                    },
+                    modifier = Modifier.weight(1f).height(50.dp)
+                ) {
+                    Text("CHECK & SAVE")
+                }
+                OutlinedButton(
+                    onClick = {
+                        backendUrl = "https://wakeway-api.shivgarg184.workers.dev"
+                        api.setBackendUrl(backendUrl)
+                        checkBackend()
+                    },
+                    modifier = Modifier.weight(1f).height(50.dp)
+                ) {
+                    Text("USE PRODUCTION")
+                }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Permissions", fontWeight = FontWeight.Bold)
+                    Text("Notifications and battery settings are important for a reliable destination alarm.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
                             }
-                        }
-                    }
-                }, modifier = Modifier.weight(1f)) {
-                    Text("TEST BACKEND")
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Notification settings") }
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Battery optimisation") }
                 }
-                OutlinedButton(onClick = {
-                    api.setBackendUrl("")
-                    backendUrl = ""
-                    status = "Backend override cleared. Local-first fallbacks remain available."
-                }, modifier = Modifier.weight(1f)) {
-                    Text("CLEAR")
-                }
-            }
-        }
-
-        if (status.isNotBlank()) item { ApiPlainCard(status) }
-
-        item { SectionTitle("System permissions") }
-
-        item {
-            OutlinedButton(
-                onClick = {
-                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                    }
-                    context.startActivity(intent)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Notification settings")
-            }
-        }
-
-        item {
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Battery optimisation")
             }
         }
 
@@ -2480,6 +2724,21 @@ private fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ProviderPill(label: String, enabled: Boolean) {
+    AssistChip(
+        onClick = { },
+        leadingIcon = {
+            Icon(
+                if (enabled) Icons.Outlined.CheckCircle else Icons.Outlined.ErrorOutline,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp)
+            )
+        },
+        label = { Text(label, fontSize = 11.sp) }
+    )
 }
 
 @Composable
