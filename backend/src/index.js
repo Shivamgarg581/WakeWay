@@ -95,6 +95,53 @@ async function postgrestJson(env, path, body, options = {}, token = null) {
   return { ok: r.ok, status: r.status, data };
 }
 
+async function ensureProfile(env, user) {
+  if (!user?.id || !env.SUPABASE_SERVICE_ROLE_KEY || !env.SUPABASE_PUBLISHABLE_KEY) return;
+  const usernameBase = String(
+    user.user_metadata?.username ||
+    user.email?.split("@")[0] ||
+    "traveler"
+  )
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 28) || "traveler";
+
+  const existing = await supabaseFetch(
+    env,
+    `/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=id,username`,
+    { method: "GET" },
+    null,
+    true
+  );
+  if (existing.ok && (await existing.json()).length) return;
+
+  let username = usernameBase;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const suffix = attempt === 0 ? "" : "_" + Math.floor(Math.random() * 900 + 100);
+    const candidate = (usernameBase + suffix).slice(0, 32);
+    const payload = [{
+      id: user.id,
+      username: candidate,
+      display_name: user.user_metadata?.display_name || user.email?.split("@")[0] || "WakeWay traveler"
+    }];
+
+    const created = await supabaseFetch(
+      env,
+      "/rest/v1/profiles",
+      {
+        method: "POST",
+        headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+        body: JSON.stringify(payload)
+      },
+      null,
+      true
+    );
+    if (created.ok) return;
+    username = candidate;
+  }
+}
+
 async function authProxy(request, env, action) {
   const body = await readJson(request);
 
@@ -123,6 +170,9 @@ async function authProxy(request, env, action) {
   });
 
   const data = await r.json();
+  if (r.ok && data?.user?.id) {
+    await ensureProfile(env, data.user);
+  }
   return json(data, r.status);
 }
 
@@ -237,7 +287,7 @@ async function journeys(request, env, method, id = null) {
     return r.ok ? json(await r.json()) : json({ error: await r.text() }, 500);
   }
 
-  if (method === "POST") {
+  if (method === "POST" && !id) {
     const body = await readJson(request);
     if (!body.id || !body.destination_name || body.destination_lat == null || body.destination_lon == null) {
       return json({ error: "journey id and destination are required" }, 400);
