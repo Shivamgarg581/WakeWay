@@ -1064,7 +1064,7 @@ private fun SetupScreen(
     onMap: () -> Unit,
     onStart: (Destination, TransportMode, List<JourneyAlert>) -> Unit
 ) {
-    var search by remember { mutableStateOf("") }
+    var search by remember { mutableStateOf(initialDestination?.name ?: "") }
     var results by remember { mutableStateOf<List<Destination>>(emptyList()) }
     var selected by remember { mutableStateOf(initialDestination) }
     var transport by remember { mutableStateOf(initialTransport) }
@@ -1072,20 +1072,23 @@ private fun SetupScreen(
     var readyAlert by remember { mutableStateOf("0.5") }
     var finalAlert by remember { mutableStateOf("0.15") }
     var timeAlert by remember { mutableStateOf("15") }
-    var voice by remember { mutableStateOf(true) }
-    var vibration by remember { mutableStateOf(true) }
+    var voice by remember { mutableStateOf(store.setting("voice", "true") == "true") }
+    var vibration by remember { mutableStateOf(store.setting("vibration", "true") == "true") }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var savedMessage by remember { mutableStateOf("") }
 
-    fun performSearch() {
-        if (search.trim().length < 2) {
-            message = "Type at least 2 letters."
+    fun searchPlaces(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
+            results = emptyList()
+            loading = false
             return
         }
         loading = true
-        message = ""
         Executors.newSingleThreadExecutor().execute {
-            val response = api.searchPlaces(search)
+            val response = api.searchPlaces(trimmed)
             val parsed = mutableListOf<Destination>()
             val array = response.optJSONArray("results") ?: JSONArray()
             for (i in 0 until array.length()) {
@@ -1103,84 +1106,237 @@ private fun SetupScreen(
             }
             Handler(Looper.getMainLooper()).post {
                 loading = false
-                results = parsed
-                if (parsed.isEmpty()) {
-                    message = response.optString("error", "No places found.")
+                if (trimmed == search.trim()) {
+                    results = parsed
+                    if (parsed.isEmpty() && response.has("error")) {
+                        message = apiFriendlyError(response, "No destinations found.")
+                    } else {
+                        message = ""
+                    }
                 }
             }
         }
     }
 
+    LaunchedEffect(search) {
+        delay(320)
+        searchPlaces(search)
+    }
+
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(top = 14.dp, bottom = 34.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Text(
-                "Where should WakeWay wake you?",
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold
+                "Where are you going?",
+                fontSize = 30.sp,
+                lineHeight = 34.sp,
+                fontWeight = FontWeight.ExtraBold
             )
             Text(
-                "Search a city, station, landmark or postal code.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                "Search anything from a railway station to a city, hotel or landmark.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 5.dp)
             )
         }
 
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = search,
-                    onValueChange = { search = it },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("Search destination") }
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
-                Button(
-                    onClick = ::performSearch,
-                    modifier = Modifier.height(56.dp)
-                ) {
-                    if (loading) CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp
-                    ) else Text("Search")
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = {
+                            search = it
+                            message = ""
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
+                        label = { Text("Search destination") },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.Search, contentDescription = null)
+                        },
+                        trailingIcon = {
+                            if (loading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else if (search.isNotBlank()) {
+                                IconButton(onClick = {
+                                    search = ""
+                                    selected = null
+                                    onDestination(Destination("", "", 0.0, 0.0))
+                                }) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Clear")
+                                }
+                            }
+                        }
+                    )
+
+                    if (results.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        results.take(6).forEach { destination ->
+                            ElevatedCard(
+                                onClick = {
+                                    selected = destination
+                                    search = destination.name
+                                    results = emptyList()
+                                    message = ""
+                                    onDestination(destination)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.elevatedCardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                )
+                            ) {
+                                Row(
+                                    Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.LocationOn,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(8.dp).size(20.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            destination.name,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            destination.address,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.Outlined.ArrowForward,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                        }
+                    }
                 }
             }
         }
 
         if (message.isNotBlank()) {
             item {
-                Text(
-                    message,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp
-                )
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.ErrorOutline, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Text(message, fontSize = 13.sp)
+                    }
+                }
             }
         }
 
-        if (results.isNotEmpty()) {
-            item { SectionTitle("Search results") }
-            items(results) { destination ->
+        selected?.takeIf { it.name.isNotBlank() }?.let { destination ->
+            item {
                 ElevatedCard(
-                    onClick = {
-                        selected = destination
-                        onDestination(destination)
-                    },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp)
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
                 ) {
-                    Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("📍", fontSize = 24.sp)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(destination.name, fontWeight = FontWeight.Bold)
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(15.dp),
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.LocationOn,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(10.dp).size(24.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("DESTINATION", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(destination.name, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                        Text(
+                            destination.address,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = onMap, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Outlined.Map, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Map")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    val token = store.accessToken()
+                                    if (token.isNullOrBlank()) {
+                                        savedMessage = "Sign in from Account to save destinations."
+                                        return@OutlinedButton
+                                    }
+                                    saving = true
+                                    Executors.newSingleThreadExecutor().execute {
+                                        val response = api.savePlace(
+                                            JSONObject()
+                                                .put("name", destination.name)
+                                                .put("address", destination.address)
+                                                .put("latitude", destination.latitude)
+                                                .put("longitude", destination.longitude),
+                                            token
+                                        )
+                                        Handler(Looper.getMainLooper()).post {
+                                            saving = false
+                                            savedMessage = if (response.has("error")) {
+                                                apiFriendlyError(response, "Could not save destination.")
+                                            } else {
+                                                "Saved to your destinations."
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                else Text("Save")
+                            }
+                        }
+                        if (savedMessage.isNotBlank()) {
                             Text(
-                                destination.address,
+                                savedMessage,
                                 fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
                     }
@@ -1188,39 +1344,15 @@ private fun SetupScreen(
             }
         }
 
-        item {
-            OutlinedButton(onClick = onMap, modifier = Modifier.fillMaxWidth()) {
-                Text("📌 Open destination map")
-            }
-        }
-
-        selected?.let { destination ->
-            item {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                ) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Selected destination", fontWeight = FontWeight.Bold)
-                        Text(destination.name, fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                        Text(destination.address, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            "GPS " + String.format(Locale.US, "%.5f, %.5f", destination.latitude, destination.longitude),
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        item { SectionTitle("Travel mode") }
+        item { SectionTitle("How will you travel?") }
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TransportMode.entries.toList().chunked(2).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         row.forEach { mode ->
                             FilterChip(
                                 selected = transport == mode,
@@ -1228,7 +1360,13 @@ private fun SetupScreen(
                                     transport = mode
                                     onTransport(mode)
                                 },
-                                label = { Text(mode.emoji + " " + mode.label) },
+                                label = {
+                                    Text(
+                                        mode.emoji + " " + mode.label,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -1238,22 +1376,32 @@ private fun SetupScreen(
             }
         }
 
-        item { SectionTitle("Progressive wake-up") }
+        item {
+            SectionTitle("Wake-up sequence")
+            Text(
+                "WakeWay can warn you progressively so you have time to get ready.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 3.dp)
+            )
+        }
 
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                AlertField("First warning", "kilometres", firstAlert) { firstAlert = it }
-                AlertField("Get ready", "kilometres", readyAlert) { readyAlert = it }
-                AlertField("Final arrival", "kilometres", finalAlert) { finalAlert = it }
-                AlertField("Time backup", "minutes", timeAlert) { timeAlert = it }
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AlertField("First warning", "km", firstAlert) { firstAlert = it }
+                    AlertField("Get ready", "km", readyAlert) { readyAlert = it }
+                    AlertField("Final arrival", "km", finalAlert) { finalAlert = it }
+                    AlertField("Time backup", "min", timeAlert) { timeAlert = it }
+                }
             }
         }
 
         item {
-            Card(shape = RoundedCornerShape(20.dp)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(16.dp)) {
                     ToggleRow("Voice announcements", voice) { voice = it }
-                    Divider()
+                    androidx.compose.material3.HorizontalDivider()
                     ToggleRow("Vibration", vibration) { vibration = it }
                 }
             }
@@ -1262,41 +1410,44 @@ private fun SetupScreen(
         item {
             Button(
                 onClick = {
-                    val destination = selected
+                    val destination = selected?.takeIf { it.name.isNotBlank() }
                     if (destination == null) {
-                        message = "Select a destination first."
+                        message = "Choose a destination from the predictions first."
                         return@Button
                     }
-
                     val first = firstAlert.toDoubleOrNull()
                     val ready = readyAlert.toDoubleOrNull()
                     val finalKm = finalAlert.toDoubleOrNull()
                     val backup = timeAlert.toDoubleOrNull()
-
-                    if (first == null || ready == null || finalKm == null || backup == null || first <= 0 || ready <= 0 || finalKm <= 0) {
-                        message = "Please enter valid alert values."
+                    if (first == null || ready == null || finalKm == null || backup == null ||
+                        first <= 0 || ready <= 0 || finalKm <= 0 || backup <= 0
+                    ) {
+                        message = "Enter valid positive alert values."
                         return@Button
                     }
-
-                    if (voice) store.saveSetting("voice", "true")
-                    else store.saveSetting("voice", "false")
-
-                    if (vibration) store.saveSetting("vibration", "true")
-                    else store.saveSetting("vibration", "false")
-
-                    val alerts = listOf(
-                        JourneyAlert(AlertTrigger.DISTANCE, first, "First warning"),
-                        JourneyAlert(AlertTrigger.DISTANCE, ready, "Get ready"),
-                        JourneyAlert(AlertTrigger.DISTANCE, finalKm, "Final arrival"),
-                        JourneyAlert(AlertTrigger.TIME, backup, "Time backup")
+                    if (finalKm >= ready || ready >= first) {
+                        message = "Use descending distances: first warning > get ready > final arrival."
+                        return@Button
+                    }
+                    store.saveSetting("voice", voice.toString())
+                    store.saveSetting("vibration", vibration.toString())
+                    onStart(
+                        destination,
+                        transport,
+                        listOf(
+                            JourneyAlert(AlertTrigger.DISTANCE, first, "First warning"),
+                            JourneyAlert(AlertTrigger.DISTANCE, ready, "Get ready"),
+                            JourneyAlert(AlertTrigger.DISTANCE, finalKm, "Final arrival"),
+                            JourneyAlert(AlertTrigger.TIME, backup, "Time backup")
+                        )
                     )
-
-                    onStart(destination, transport, alerts)
                 },
                 modifier = Modifier.fillMaxWidth().height(58.dp),
-                shape = RoundedCornerShape(18.dp)
+                shape = RoundedCornerShape(19.dp)
             ) {
-                Text("🔔 ARM WAKEWAY", fontWeight = FontWeight.Bold)
+                Icon(Icons.Outlined.NotificationsActive, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("ARM DESTINATION ALARM", fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1309,34 +1460,36 @@ private fun AlertField(
     value: String,
     onValueChange: (String) -> Unit
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.weight(1f),
             singleLine = true,
-            label = { Text(title) }
+            label = { Text(title) },
+            leadingIcon = {
+                Icon(
+                    if (suffix == "km") Icons.Outlined.Explore else Icons.Outlined.Schedule,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         )
         Box(
             Modifier
-                .width(90.dp)
+                .width(76.dp)
                 .height(56.dp)
                 .background(
                     MaterialTheme.colorScheme.surfaceVariant,
-                    RoundedCornerShape(12.dp)
+                    RoundedCornerShape(14.dp)
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text(suffix, fontSize = 12.sp)
+            Text(suffix, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
-    }
-}
-
-@Composable
-private fun ToggleRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text(title, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
-        Switch(checked, onCheckedChange)
     }
 }
 
