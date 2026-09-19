@@ -86,9 +86,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 "https://wakeway-api.shivgarg184.workers.dev/health"
+          echo "Waiting for Workers deployment propagation…"
+          sleep 12
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "https://wakeway-api.shivgarg184.workers.dev/health"
           echo
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 "https://wakeway-api.shivgarg184.workers.dev/api/config"
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "https://wakeway-api.shivgarg184.workers.dev/api/config"
           echo
 
       - name: Remove temporary secrets file
