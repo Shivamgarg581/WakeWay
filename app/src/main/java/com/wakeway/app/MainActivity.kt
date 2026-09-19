@@ -238,71 +238,98 @@ private fun WakeWayApp() {
 
     Scaffold(
         topBar = {
-            if (screen != Screen.HOME) {
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                tonalElevation = 0.dp
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { screen = Screen.HOME }) {
-                        Text("←", fontSize = 28.sp)
+                    IconButton(
+                        onClick = {
+                            if (screen == Screen.HOME) {
+                                screen = Screen.SETTINGS
+                            } else {
+                                screen = Screen.HOME
+                            }
+                        }
+                    ) {
+                        Icon(
+                            if (screen == Screen.HOME) Icons.Outlined.Settings else Icons.Outlined.ArrowForward,
+                            contentDescription = if (screen == Screen.HOME) "Settings" else "Home",
+                            modifier = if (screen == Screen.HOME) Modifier else Modifier.size(24.dp)
+                        )
                     }
-                    Text(
-                        when (screen) {
-                            Screen.SETUP -> "Set a destination"
-                            Screen.ACTIVE -> "Journey in progress"
-                            Screen.HISTORY -> "Journey history"
-                            Screen.EXPLORE -> "Travel tools"
-                            Screen.TRAIN -> "Live trains"
-                            Screen.WEATHER -> "Weather"
-                            Screen.AI -> "WakeWay AI"
-                            Screen.FAMILY -> "Family"
-                            Screen.FRIENDS -> "Friends"
-                            Screen.CHAT -> "Chat"
-                            Screen.ACCOUNT -> "Account"
-                            Screen.SETTINGS -> "Settings"
-                            Screen.PREMIUM -> "Premium"
-                            Screen.MAP -> "Map"
-                            else -> "WakeWay"
-                        },
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
-                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            when (screen) {
+                                Screen.HOME -> "Good to have you here"
+                                Screen.SETUP -> "Set a destination"
+                                Screen.ACTIVE -> "Journey in progress"
+                                Screen.HISTORY -> "Journey history"
+                                Screen.EXPLORE -> "Travel tools"
+                                Screen.TRAIN -> "Live trains"
+                                Screen.WEATHER -> "Weather"
+                                Screen.AI -> "WakeWay AI"
+                                Screen.FAMILY -> "Family"
+                                Screen.FRIENDS -> "Friends"
+                                Screen.CHAT -> "Chat"
+                                Screen.ACCOUNT -> "Account"
+                                Screen.SETTINGS -> "Settings"
+                                Screen.PREMIUM -> "Premium"
+                                Screen.MAP -> "Destination map"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                        if (screen == Screen.HOME) {
+                            Text(
+                                "Your stop is the only thing you need to remember.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
                 NavigationBarItem(
                     selected = screen == Screen.HOME,
                     onClick = { screen = Screen.HOME },
-                    icon = { Text("⌂", fontSize = 22.sp) },
+                    icon = { Icon(Icons.Outlined.Home, contentDescription = "Home") },
                     label = { Text("Home") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.ACTIVE || screen == Screen.SETUP,
                     onClick = { screen = if (journey != null) Screen.ACTIVE else Screen.SETUP },
-                    icon = { Text("🧭", fontSize = 21.sp) },
+                    icon = { Icon(Icons.Outlined.Explore, contentDescription = "Journey") },
                     label = { Text("Journey") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.HISTORY,
                     onClick = { screen = Screen.HISTORY },
-                    icon = { Text("◷", fontSize = 21.sp) },
+                    icon = { Icon(Icons.Outlined.History, contentDescription = "History") },
                     label = { Text("History") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.EXPLORE,
                     onClick = { screen = Screen.EXPLORE },
-                    icon = { Text("✦", fontSize = 21.sp) },
+                    icon = { Icon(Icons.Outlined.Map, contentDescription = "Explore") },
                     label = { Text("Explore") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.SETTINGS,
                     onClick = { screen = Screen.SETTINGS },
-                    icon = { Text("⚙", fontSize = 21.sp) },
+                    icon = { Icon(Icons.Outlined.Settings, contentDescription = "Settings") },
                     label = { Text("Settings") }
                 )
             }
