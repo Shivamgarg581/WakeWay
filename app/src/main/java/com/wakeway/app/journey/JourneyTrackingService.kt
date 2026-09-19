@@ -54,7 +54,12 @@ class JourneyTrackingService : Service(), LocationListener {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification("Monitoring " + journey.destination.name))
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification("Monitoring " + journey.destination.name))
+        } catch (error: Exception) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         syncJourney(journey)
 
         try {
@@ -176,11 +181,10 @@ class JourneyTrackingService : Service(), LocationListener {
                 status = JourneyStatus.COMPLETED,
                 acknowledged = false
             )
-            store.addHistory(completed)
-            syncJourney(completed)
-            if (store.setting("history", "true") != "true") {
-                // Keep only the active-state transition when history is disabled.
+            if (store.setting("history", "true") == "true") {
+                store.addHistory(completed)
             }
+            syncJourney(completed)
             store.clearActiveJourney()
             cloudExecutor.execute {
                 runCatching { api.endJourney(journey.id, "completed", store.accessToken()) }
