@@ -1684,91 +1684,231 @@ private fun ToolRow(
 
 @Composable
 private fun TrainScreen(api: ApiClient) {
-    var trainNumber by remember { mutableStateOf("12919") }
-    var stationCode by remember { mutableStateOf("KOTA") }
-    var fromCode by remember { mutableStateOf("KOTA") }
-    var toCode by remember { mutableStateOf("JP") }
+    var trainNumber by remember { mutableStateOf("") }
+    var stationQuery by remember { mutableStateOf("") }
+    var stationCode by remember { mutableStateOf("") }
+    var fromCode by remember { mutableStateOf("") }
+    var toCode by remember { mutableStateOf("") }
+    var stationSuggestions by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var result by remember { mutableStateOf<JSONObject?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    LaunchedEffect(stationQuery) {
+        delay(320)
+        val q = stationQuery.trim()
+        if (q.length < 2) {
+            stationSuggestions = emptyList()
+            return@LaunchedEffect
+        }
+        Executors.newSingleThreadExecutor().execute {
+            val response = api.trainStations(q)
+            val data = response.optJSONArray("data") ?: JSONArray()
+            val parsed = mutableListOf<Pair<String, String>>()
+            for (i in 0 until data.length()) {
+                val row = data.optJSONObject(i) ?: continue
+                parsed += (row.optString("code") to row.optString("name"))
+            }
+            Handler(Looper.getMainLooper()).post {
+                stationSuggestions = parsed.take(8)
+                if (parsed.isEmpty() && response.has("error")) {
+                    message = apiFriendlyError(response, "No station matches found.")
+                }
+            }
+        }
+    }
+
+    fun runRequest(block: () -> JSONObject) {
+        loading = true
+        message = ""
+        Executors.newSingleThreadExecutor().execute {
+            val response = block()
+            Handler(Looper.getMainLooper()).post {
+                result = response
+                loading = false
+                if (response.has("error")) {
+                    message = apiFriendlyError(response, "Rail service returned an error.")
+                }
+            }
+        }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Rail control centre", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Text("Live train data is routed through WakeWay. A RailRadar key is required for live railway responses.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        item {
+            Text("Trains", fontSize = 31.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                "Live rail tools powered through WakeWay's backend.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp
+            )
+        }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf("Train live", "Station live", "Between").forEachIndexed { index, label ->
-                FilterChip(
-                    selected = selectedTab == index,
-                    onClick = { selectedTab = index },
-                    label = { Text(label) },
-                    modifier = Modifier.weight(1f)
-                )
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Train live", "Station", "Between").forEachIndexed { index, label ->
+                    FilterChip(
+                        selected = selectedTab == index,
+                        onClick = {
+                            selectedTab = index
+                            result = null
+                            message = ""
+                        },
+                        label = { Text(label) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
 
-        when (selectedTab) {
-            0 -> {
-                OutlinedTextField(trainNumber, { trainNumber = it }, label = { Text("Train number") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                Button(
-                    onClick = {
-                        loading = true
-                        Executors.newSingleThreadExecutor().execute {
-                            val response = api.train(trainNumber.trim())
-                            Handler(Looper.getMainLooper()).post { result = response; loading = false }
+        item {
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (selectedTab) {
+                        0 -> {
+                            OutlinedTextField(
+                                value = trainNumber,
+                                onValueChange = { trainNumber = it.filter(Char::isDigit).take(6) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("Train number") },
+                                leadingIcon = { Icon(Icons.Outlined.DirectionsRailway, contentDescription = null) },
+                                placeholder = { Text("e.g. 12919") }
+                            )
+                            Button(
+                                onClick = {
+                                    if (trainNumber.length < 4) {
+                                        message = "Enter a valid train number."
+                                        return@Button
+                                    }
+                                    runRequest { api.train(trainNumber) }
+                                },
+                                modifier = Modifier.fillMaxWidth().height(50.dp)
+                            ) {
+                                if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                else {
+                                    Icon(Icons.Outlined.Search, contentDescription = null)
+                                    Spacer(Modifier.width(7.dp))
+                                    Text("CHECK LIVE STATUS")
+                                }
+                            }
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("CHECK LIVE STATUS") }
-            }
-            1 -> {
-                OutlinedTextField(stationCode, { stationCode = it.uppercase(Locale.US) }, label = { Text("Station code") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = {
-                        loading = true
-                        Executors.newSingleThreadExecutor().execute {
-                            val response = api.stationLive(stationCode)
-                            Handler(Looper.getMainLooper()).post { result = response; loading = false }
+                        1 -> {
+                            OutlinedTextField(
+                                value = stationQuery,
+                                onValueChange = { stationQuery = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("Search station") },
+                                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                                placeholder = { Text("Delhi, KOTA, Mumbai…") }
+                            )
+
+                            if (stationSuggestions.isNotEmpty()) {
+                                stationSuggestions.forEach { (code, name) ->
+                                    ElevatedCard(
+                                        onClick = {
+                                            stationCode = code
+                                            stationQuery = code + " • " + name
+                                            stationSuggestions = emptyList()
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(16.dp)
+                                    ) {
+                                        Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Outlined.LocationOn, contentDescription = null)
+                                            Spacer(Modifier.width(9.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(name, fontWeight = FontWeight.Bold)
+                                                Text(code, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Icon(Icons.Outlined.ArrowForward, contentDescription = null, modifier = Modifier.size(17.dp))
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (stationCode.isNotBlank()) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                    Button(
+                                        onClick = { runRequest { api.stationLive(stationCode) } },
+                                        modifier = Modifier.weight(1f).height(48.dp)
+                                    ) { Text("LIVE") }
+                                    OutlinedButton(
+                                        onClick = { runRequest { api.stationBoard(stationCode) } },
+                                        modifier = Modifier.weight(1f).height(48.dp)
+                                    ) { Text("TIMETABLE") }
+                                }
+                            }
                         }
-                    }, modifier = Modifier.weight(1f)) { Text("LIVE BOARD") }
-                    OutlinedButton(onClick = {
-                        loading = true
-                        Executors.newSingleThreadExecutor().execute {
-                            val response = api.stationBoard(stationCode)
-                            Handler(Looper.getMainLooper()).post { result = response; loading = false }
+                        else -> {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                    value = fromCode,
+                                    onValueChange = { fromCode = it.uppercase(Locale.US).take(5) },
+                                    label = { Text("From code") },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = toCode,
+                                    onValueChange = { toCode = it.uppercase(Locale.US).take(5) },
+                                    label = { Text("To code") },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true
+                                )
+                            }
+                            Text(
+                                "Tip: use station codes such as KOTA → JP.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = {
+                                    if (fromCode.isBlank() || toCode.isBlank()) {
+                                        message = "Enter both station codes."
+                                        return@Button
+                                    }
+                                    runRequest { api.trainsBetween(fromCode, toCode, live = true) }
+                                },
+                                modifier = Modifier.fillMaxWidth().height(50.dp)
+                            ) {
+                                Text("FIND TRAINS")
+                            }
                         }
-                    }, modifier = Modifier.weight(1f)) { Text("TIMETABLE") }
-                }
-            }
-            else -> {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(fromCode, { fromCode = it.uppercase(Locale.US) }, label = { Text("From") }, modifier = Modifier.weight(1f), singleLine = true)
-                    OutlinedTextField(toCode, { toCode = it.uppercase(Locale.US) }, label = { Text("To") }, modifier = Modifier.weight(1f), singleLine = true)
-                }
-                Button(onClick = {
-                    loading = true
-                    Executors.newSingleThreadExecutor().execute {
-                        val response = api.trainsBetween(fromCode, toCode, live = true)
-                        Handler(Looper.getMainLooper()).post { result = response; loading = false }
                     }
-                }, modifier = Modifier.fillMaxWidth()) { Text("FIND TRAINS") }
+                }
             }
         }
 
-        result?.let { response -> ApiResultCard(response) }
+        if (message.isNotBlank()) item { ApiPlainCard(message) }
 
-        Card(shape = RoundedCornerShape(20.dp)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Rail API coverage", fontWeight = FontWeight.Bold)
-                Text("Live train • station live board • station timetable • trains between stations", fontSize = 12.sp)
-                Text("Route geometry • seats • coach position • station search • train directories • filters", fontSize = 12.sp)
+        result?.let { response ->
+            ApiResultCard(response)
+        }
+
+        item {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                )
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("RailRadar coverage", fontWeight = FontWeight.Bold)
+                    Text("Live train • station boards • station autocomplete • trains between stations", fontSize = 12.sp)
+                    Text("Routes • seats • coach position • directories • filters are available in the backend.", fontSize = 12.sp)
+                    Text("Free sandbox quota: 1,000 requests/month.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
 }
+
 @Composable
 private fun WeatherScreen(api: ApiClient, destination: Destination?) {
     var lat by remember { mutableStateOf(destination?.latitude?.toString() ?: "25.2138") }
