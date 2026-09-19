@@ -3,7 +3,11 @@ package com.wakeway.app.config
 import com.wakeway.app.BuildConfig
 
 object AppConfig {
-    val backendUrl: String = BuildConfig.BACKEND_URL.trimEnd('/')
+    private const val PRODUCTION_BACKEND = "https://wakeway-api.shivgarg184.workers.dev"
+
+    val backendUrl: String =
+        BuildConfig.BACKEND_URL.trim().trimEnd('/').ifBlank { PRODUCTION_BACKEND }
+
     val supabaseUrl: String = BuildConfig.SUPABASE_URL.trimEnd('/')
     val supabasePublishableKey: String = BuildConfig.SUPABASE_PUBLISHABLE_KEY
 
