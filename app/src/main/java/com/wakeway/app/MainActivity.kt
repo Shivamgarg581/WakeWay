@@ -2,9 +2,13 @@ package com.wakeway.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -233,10 +237,35 @@ private fun WakeWayApp() {
 
         if (locationGranted && notificationGranted && pending != null) {
             startService(pending)
+        } else if (pending != null) {
+            Toast.makeText(
+                context,
+                "WakeWay needs Location and Notifications permission to monitor your stop.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
     fun beginJourney(j: Journey) {
+        val locationManager = context.getSystemService(LocationManager::class.java)
+        val locationEnabled = runCatching {
+            (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) ||
+                (locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true)
+        }.getOrDefault(false)
+
+        if (!locationEnabled) {
+            Toast.makeText(
+                context,
+                "Turn on Location first so WakeWay can monitor your journey.",
+                Toast.LENGTH_LONG
+            ).show()
+            runCatching {
+                context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            }
+            pendingJourney = j
+            return
+        }
+
         val missing = locationPermissions.filter {
             ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
         }
@@ -2992,6 +3021,14 @@ private fun SettingsScreen(
                     Text("Permissions", fontWeight = FontWeight.Bold)
                     Text("Notifications and battery settings are important for a reliable destination alarm.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedButton(
+                        onClick = { testLocalAlarm(context, store) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.NotificationsActive, contentDescription = null)
+                        Spacer(Modifier.width(7.dp))
+                        Text("TEST ALARM NOW")
+                    }
+                    OutlinedButton(
                         onClick = {
                             val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
                                 putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
@@ -3161,6 +3198,37 @@ private fun SavedPlacesScreen(
             }
         }
     }
+}
+
+private fun testLocalAlarm(context: Context, store: LocalStore) {
+    val channelId = "wakeway_test"
+    val manager = context.getSystemService(NotificationManager::class.java)
+    manager.createNotificationChannel(
+        NotificationChannel(
+            channelId,
+            "WakeWay test alerts",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Test notifications for WakeWay alarm settings."
+            enableVibration(true)
+        }
+    )
+    val notification = Notification.Builder(context, channelId)
+        .setSmallIcon(R.drawable.ic_notification)
+        .setContentTitle("WakeWay test alarm")
+        .setContentText("Alarm, voice and vibration settings are ready to test.")
+        .setCategory(Notification.CATEGORY_ALARM)
+        .setPriority(Notification.PRIORITY_MAX)
+        .setAutoCancel(true)
+        .build()
+    manager.notify(8401, notification)
+
+    if (store.setting("vibration", "true") == "true") {
+        context.getSystemService(android.os.Vibrator::class.java)?.vibrate(
+            android.os.VibrationEffect.createWaveform(longArrayOf(0, 450, 180, 800), -1)
+        )
+    }
+    Toast.makeText(context, "Test alert sent.", Toast.LENGTH_SHORT).show()
 }
 
 @Composable
