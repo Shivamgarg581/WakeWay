@@ -53,40 +53,49 @@ class ApiClient(context: Context) {
         val q = query.trim()
         if (q.length < 2) return JSONObject().put("results", JSONArray())
 
-        return if (isConfigured()) {
-            get("/api/place-search", query = mapOf("q" to q))
-        } else {
-            val raw = externalGet(
-                "https://geocoding-api.open-meteo.com/v1/search",
-                mapOf("name" to q, "count" to "8", "language" to "en", "format" to "json")
-            )
-            val results = JSONArray()
-            val rows = raw.optJSONArray("results") ?: JSONArray()
-            for (i in 0 until rows.length()) {
-                val row = rows.optJSONObject(i) ?: continue
-                results.put(
-                    JSONObject().apply {
-                        put(
-                            "name",
-                            listOf(row.optString("name"), row.optString("admin1"), row.optString("country"))
-                                .filter { it.isNotBlank() }.joinToString(", ")
-                        )
-                        put("shortName", row.optString("name"))
-                        put(
-                            "address",
-                            listOf(row.optString("admin1"), row.optString("country"))
-                                .filter { it.isNotBlank() }.joinToString(", ")
-                        )
-                        put("latitude", row.optDouble("latitude"))
-                        put("longitude", row.optDouble("longitude"))
-                        put("country", row.optString("country"))
-                        put("countryCode", row.optString("country_code"))
-                        put("timezone", row.optString("timezone"))
-                    }
-                )
+        if (isConfigured()) {
+            val backend = get("/api/place-search", query = mapOf("q" to q))
+            val backendResults = backend.optJSONArray("results")
+            if (backend.optInt("http_status", 0) in 200..299 && backendResults != null && backendResults.length() > 0) {
+                return backend
             }
-            JSONObject().put("results", results)
         }
+
+        val raw = externalGet(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            mapOf(
+                "name" to q,
+                "count" to "8",
+                "language" to "en",
+                "format" to "json"
+            )
+        )
+        val results = JSONArray()
+        val rows = raw.optJSONArray("results") ?: JSONArray()
+        for (i in 0 until rows.length()) {
+            val row = rows.optJSONObject(i) ?: continue
+            results.put(
+                JSONObject().apply {
+                    put(
+                        "name",
+                        listOf(row.optString("name"), row.optString("admin1"), row.optString("country"))
+                            .filter { it.isNotBlank() }.joinToString(", ")
+                    )
+                    put("shortName", row.optString("name"))
+                    put(
+                        "address",
+                        listOf(row.optString("admin1"), row.optString("country"))
+                            .filter { it.isNotBlank() }.joinToString(", ")
+                    )
+                    put("latitude", row.optDouble("latitude"))
+                    put("longitude", row.optDouble("longitude"))
+                    put("country", row.optString("country"))
+                    put("countryCode", row.optString("country_code"))
+                    put("timezone", row.optString("timezone"))
+                }
+            )
+        }
+        return JSONObject().put("results", results)
     }
 
     fun weather(lat: Double, lon: Double): JSONObject =
