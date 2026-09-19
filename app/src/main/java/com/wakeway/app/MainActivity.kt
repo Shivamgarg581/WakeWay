@@ -709,292 +709,6 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun HomeScreen(
-    journey: Journey?,
-    backendOnline: Boolean,
-    backendMessage: String,
-    onStart: () -> Unit,
-    onActive: () -> Unit,
-    onOpen: (Screen) -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Icon(
-                        Icons.Outlined.NotificationsActive,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(10.dp)
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "WakeWay",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Text(
-                        "Destination alarm",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = { onOpen(Screen.SETTINGS) }) {
-                    Icon(Icons.Outlined.Settings, contentDescription = "Settings")
-                }
-            }
-        }
-
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(
-                    "Never miss your stop.",
-                    fontSize = 34.sp,
-                    lineHeight = 38.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                Text(
-                    "Tell WakeWay where you're going. We'll keep watch while you sleep.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 15.sp
-                )
-            }
-        }
-
-        item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primaryContainer,
-                                MaterialTheme.colorScheme.tertiaryContainer
-                            )
-                        ),
-                        RoundedCornerShape(30.dp)
-                    )
-                    .padding(20.dp)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "WAKE BEFORE ARRIVAL",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "Set a destination, choose your alerts, and relax.",
-                                fontSize = 22.sp,
-                                lineHeight = 26.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.76f)
-                        ) {
-                            Icon(
-                                Icons.Outlined.LocationOn,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(12.dp).size(28.dp)
-                            )
-                        }
-                    }
-
-                    Button(
-                        onClick = onStart,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(54.dp),
-                        shape = RoundedCornerShape(18.dp)
-                    ) {
-                        Icon(Icons.Outlined.ArrowForward, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("SET DESTINATION", fontWeight = FontWeight.Bold)
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusPill(
-                            label = if (backendOnline) "Cloud connected" else "Local-first",
-                            good = backendOnline
-                        )
-                        StatusPill(
-                            label = if (journey != null) "Journey active" else "Ready",
-                            good = journey != null
-                        )
-                    }
-                }
-            }
-        }
-
-        journey?.let { active ->
-            item {
-                ElevatedCard(
-                    onClick = onActive,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    )
-                ) {
-                    Column(
-                        Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(9.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Explore,
-                                    contentDescription = null,
-                                    modifier = Modifier.padding(10.dp),
-                                    tint = MaterialTheme.colorScheme.secondary
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "JOURNEY ACTIVE",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    active.destination.name,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Icon(Icons.Outlined.ArrowForward, contentDescription = null)
-                        }
-                        Text(
-                            active.transport.label + " • " + active.alerts.size + " alerts armed",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-
-        item { SectionTitle("Everything you need on the way") }
-
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                FeatureCard(
-                    icon = Icons.Outlined.DirectionsRailway,
-                    title = "Trains",
-                    subtitle = "Live rail status",
-                    modifier = Modifier.weight(1f)
-                ) { onOpen(Screen.TRAIN) }
-                FeatureCard(
-                    icon = Icons.Outlined.Cloud,
-                    title = "Weather",
-                    subtitle = "At your destination",
-                    modifier = Modifier.weight(1f)
-                ) { onOpen(Screen.WEATHER) }
-            }
-        }
-
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                FeatureCard(
-                    icon = Icons.Outlined.AutoAwesome,
-                    title = "AI",
-                    subtitle = "Ask WakeWay",
-                    modifier = Modifier.weight(1f)
-                ) { onOpen(Screen.AI) }
-                FeatureCard(
-                    icon = Icons.Outlined.FamilyRestroom,
-                    title = "Family",
-                    subtitle = "Private sharing",
-                    modifier = Modifier.weight(1f)
-                ) { onOpen(Screen.FAMILY) }
-            }
-        }
-
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                FeatureCard(
-                    icon = Icons.Outlined.Group,
-                    title = "Friends",
-                    subtitle = "Requests & chat",
-                    modifier = Modifier.weight(1f)
-                ) { onOpen(Screen.FRIENDS) }
-                FeatureCard(
-                    icon = Icons.Outlined.StarOutline,
-                    title = "Premium",
-                    subtitle = "More control",
-                    modifier = Modifier.weight(1f)
-                ) { onOpen(Screen.PREMIUM) }
-            }
-        }
-
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f)
-                )
-            ) {
-                Row(
-                    Modifier.padding(18.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Outlined.Security,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(28.dp)
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text("Local-first reliability", fontWeight = FontWeight.Bold)
-                        Text(
-                            "The core destination alarm stays on-device. Cloud features are an enhancement, not a dependency.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun StatusPill(label: String, good: Boolean) {
     AssistChip(
         onClick = { },
@@ -1502,6 +1216,28 @@ private fun AlertField(
         ) {
             Text(suffix, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+@Composable
+private fun ToggleRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            fontWeight = FontWeight.Medium
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
     }
 }
 
