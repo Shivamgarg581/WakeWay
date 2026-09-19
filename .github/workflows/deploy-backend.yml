@@ -81,6 +81,16 @@ jobs:
           workingDirectory: backend
           command: deploy --secrets-file .wakeway-secrets.json
 
+      - name: Smoke test deployed Worker
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        shell: bash
+        run: |
+          set -e
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "https://wakeway-api.shivgarg184.workers.dev/health"
+          echo
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "https://wakeway-api.shivgarg184.workers.dev/api/config"
+          echo
+
       - name: Remove temporary secrets file
         if: always()
         working-directory: backend
