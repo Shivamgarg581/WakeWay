@@ -2403,90 +2403,171 @@ private fun FamilyScreen(api: ApiClient, store: LocalStore) {
 @Composable
 private fun FriendsScreen(api: ApiClient, store: LocalStore) {
     val token = store.accessToken()
-    var username by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf("") }
-    var pending by remember { mutableStateOf<JSONArray?>(null) }
+    var requestUsername by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var pending by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var friends by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var message by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
 
     if (token.isNullOrBlank()) {
         AuthRequiredCard("Sign in to use Friends.")
         return
     }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    fun loadFriends() {
+        loading = true
+        Executors.newSingleThreadExecutor().execute {
+            val response = api.friends("list", bearer = token)
+            val pendingArray = response.optJSONArray("pending") ?: JSONArray()
+            val allFriends = mutableListOf<JSONObject>()
+            val pendingRows = mutableListOf<JSONObject>()
+            for (i in 0 until pendingArray.length()) {
+                pendingRows += pendingArray.optJSONObject(i) ?: continue
+            }
+
+            val friendObject = response.optJSONObject("friends")
+            val sent = friendObject?.optJSONArray("sent") ?: JSONArray()
+            val received = friendObject?.optJSONArray("received") ?: JSONArray()
+            for (i in 0 until sent.length()) {
+                sent.optJSONObject(i)?.let(allFriends::add)
+            }
+            for (i in 0 until received.length()) {
+                received.optJSONObject(i)?.let(allFriends::add)
+            }
+
+            Handler(Looper.getMainLooper()).post {
+                pending = pendingRows
+                friends = allFriends
+                loading = false
+                if (response.has("error")) {
+                    message = apiFriendlyError(response, "Could not load your friends.")
+                }
+            }
+        }
+    }
+
+    fun searchPeople(value: String) {
+        val q = value.trim()
+        if (q.length < 2) {
+            searchResults = emptyList()
+            return
+        }
+        Executors.newSingleThreadExecutor().execute {
+            val response = api.friends("search", bearer = token, query = mapOf("q" to q))
+            val array = response.optJSONArray("results") ?: JSONArray()
+            val rows = mutableListOf<JSONObject>()
+            for (i in 0 until array.length()) {
+                array.optJSONObject(i)?.let(rows::add)
+            }
+            Handler(Looper.getMainLooper()).post {
+                searchResults = rows
+                if (response.has("error")) {
+                    message = apiFriendlyError(response, "People search failed.")
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        loadFriends()
+    }
+
+    LaunchedEffect(query) {
+        delay(280)
+        searchPeople(query)
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Friends", fontSize = 29.sp, fontWeight = FontWeight.Bold)
-        Text("Search, send requests, accept requests, block or report accounts.")
+        item {
+            Text("Friends", fontSize = 31.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                "Find people, manage requests and keep unwanted accounts blocked.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
-        OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Username") })
-        Button(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val response = api.friends(
-                    "request",
-                    JSONObject().put("username", username),
-                    token
+        item {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
-                Handler(Looper.getMainLooper()).post {
-                    result = response.optString("message", response.optString("error", response.toString()))
-                }
-            }
-        }, modifier = Modifier.fillMaxWidth()) {
-            Text("SEND FRIEND REQUEST")
-        }
-
-        Divider()
-
-        OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Search people") })
-        OutlinedButton(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val response = api.friends("search", bearer = token, query = mapOf("q" to query))
-                Handler(Looper.getMainLooper()).post {
-                    result = response.optJSONArray("results")?.toString() ?: response.toString()
-                }
-            }
-        }, modifier = Modifier.fillMaxWidth()) {
-            Text("SEARCH")
-        }
-
-        OutlinedButton(onClick = {
-            Executors.newSingleThreadExecutor().execute {
-                val response = api.friends("list", bearer = token)
-                Handler(Looper.getMainLooper()).post {
-                    pending = response.optJSONArray("pending")
-                }
-            }
-        }, modifier = Modifier.fillMaxWidth()) {
-            Text("LOAD PENDING REQUESTS")
-        }
-
-        pending?.let { array ->
-            Card(shape = RoundedCornerShape(20.dp)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Pending requests", fontWeight = FontWeight.Bold)
-                    if (array.length() == 0) {
-                        Text("No pending requests.")
-                    } else {
-                        for (i in 0 until array.length()) {
-                            val row = array.optJSONObject(i) ?: continue
-                            val requestId = row.optString("id")
-                            val profile = row.optJSONObject("profiles")
-                            val name = profile?.optString("username").orEmpty().ifBlank {
-                                profile?.optString("display_name").orEmpty()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Group, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text("Find someone", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Search by username or display name.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(17.dp),
+                        label = { Text("Search people") },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (query.isNotBlank()) {
+                                IconButton(onClick = {
+                                    query = ""
+                                    searchResults = emptyList()
+                                }) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Clear")
+                                }
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(name.ifBlank { "Unknown user" }, Modifier.weight(1f))
-                                TextButton(onClick = {
-                                    Executors.newSingleThreadExecutor().execute {
-                                        api.friends("accept", JSONObject().put("request_id", requestId), token)
-                                    }
-                                }) { Text("Accept") }
-                                TextButton(onClick = {
-                                    Executors.newSingleThreadExecutor().execute {
-                                        api.friends("reject", JSONObject().put("request_id", requestId), token)
-                                    }
-                                }) { Text("Reject") }
+                        }
+                    )
+                    searchResults.forEach { person ->
+                        ElevatedCard(
+                            onClick = {
+                                requestUsername = person.optString("username")
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(17.dp)
+                        ) {
+                            Row(
+                                Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(13.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Person,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.padding(9.dp).size(20.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        person.optString("display_name").ifBlank { person.optString("username") },
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "@" + person.optString("username"),
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Icon(Icons.Outlined.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -2494,35 +2575,170 @@ private fun FriendsScreen(api: ApiClient, store: LocalStore) {
             }
         }
 
-        if (result.isNotBlank()) {
-            ApiPlainCard(result)
+        item {
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Send a request", fontWeight = FontWeight.Bold)
+                    OutlinedTextField(
+                        value = requestUsername,
+                        onValueChange = { requestUsername = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Username") }
+                    )
+                    Button(
+                        onClick = {
+                            if (requestUsername.isBlank()) {
+                                message = "Choose a username first."
+                                return@Button
+                            }
+                            loading = true
+                            Executors.newSingleThreadExecutor().execute {
+                                val response = api.friends(
+                                    "request",
+                                    JSONObject().put("username", requestUsername.trim()),
+                                    token
+                                )
+                                Handler(Looper.getMainLooper()).post {
+                                    loading = false
+                                    message = if (response.has("error")) {
+                                        apiFriendlyError(response, "Friend request failed.")
+                                    } else {
+                                        "Friend request sent."
+                                    }
+                                    loadFriends()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                    ) {
+                        if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Text("SEND REQUEST")
+                    }
+                }
+            }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                Executors.newSingleThreadExecutor().execute {
-                    val response = api.friends("block", JSONObject().put("username", username), token)
-                    Handler(Looper.getMainLooper()).post {
-                        result = response.optString("message", response.optString("error", response.toString()))
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Requests", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                IconButton(onClick = { loadFriends() }) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
+                }
+            }
+        }
+
+        if (pending.isEmpty()) {
+            item {
+                Text(
+                    "No pending requests.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            pending.forEach { row ->
+                item {
+                    val requestId = row.optString("id")
+                    val profile = row.optJSONObject("profiles")
+                    val name = profile?.optString("display_name").orEmpty().ifBlank {
+                        profile?.optString("username").orEmpty()
+                    }
+                    Card(shape = RoundedCornerShape(20.dp)) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(name.ifBlank { "Someone" }, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "wants to connect with you",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = {
+                                Executors.newSingleThreadExecutor().execute {
+                                    val response = api.friends(
+                                        "accept",
+                                        JSONObject().put("request_id", requestId),
+                                        token
+                                    )
+                                    Handler(Looper.getMainLooper()).post {
+                                        message = response.optString("message", response.optString("error", "Done"))
+                                        loadFriends()
+                                    }
+                                }
+                            }) { Text("Accept") }
+                            TextButton(onClick = {
+                                Executors.newSingleThreadExecutor().execute {
+                                    val response = api.friends(
+                                        "reject",
+                                        JSONObject().put("request_id", requestId),
+                                        token
+                                    )
+                                    Handler(Looper.getMainLooper()).post {
+                                        message = response.optString("message", response.optString("error", "Done"))
+                                        loadFriends()
+                                    }
+                                }
+                            }) { Text("Reject") }
+                        }
                     }
                 }
-            }, modifier = Modifier.weight(1f)) {
-                Text("Block")
             }
-            OutlinedButton(onClick = {
-                Executors.newSingleThreadExecutor().execute {
-                    val response = api.friends(
-                        "report",
-                        JSONObject().put("username", username).put("reason", "Reported from WakeWay"),
-                        token
-                    )
-                    Handler(Looper.getMainLooper()).post {
-                        result = response.optString("message", response.optString("error", response.toString()))
+        }
+
+        item {
+            Text("Connections", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
+
+        if (friends.isEmpty()) {
+            item {
+                Text(
+                    "Your accepted connections will appear here.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            friends.forEach { row ->
+                item {
+                    val profile = row.optJSONObject("profile")
+                    val name = profile?.optString("display_name").orEmpty().ifBlank {
+                        profile?.optString("username").orEmpty()
+                    }
+                    Card(shape = RoundedCornerShape(19.dp)) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Person,
+                                    contentDescription = null,
+                                    modifier = Modifier.padding(8.dp).size(20.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(name.ifBlank { "Friend" }, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "@" + profile?.optString("username").orEmpty(),
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = {
+                                requestUsername = profile?.optString("username").orEmpty()
+                            }) {
+                                Icon(Icons.Outlined.ArrowForward, contentDescription = "Open chat")
+                            }
+                        }
                     }
                 }
-            }, modifier = Modifier.weight(1f)) {
-                Text("Report")
             }
+        }
+
+        if (message.isNotBlank()) {
+            item { ApiPlainCard(message) }
         }
     }
 }
@@ -2533,7 +2749,9 @@ private fun ChatScreen(api: ApiClient, store: LocalStore) {
     var toUsername by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var conversationId by remember { mutableStateOf("") }
-    var transcript by remember { mutableStateOf("Start a conversation with a username.") }
+    var transcript by remember { mutableStateOf<JSONArray?>(null) }
+    var currentUserId by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("Start a conversation with a username.") }
     var loading by remember { mutableStateOf(false) }
 
     if (token.isNullOrBlank()) {
@@ -2541,88 +2759,192 @@ private fun ChatScreen(api: ApiClient, store: LocalStore) {
         return
     }
 
-    Column(
-        Modifier.fillMaxSize().padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text("Chat", fontSize = 29.sp, fontWeight = FontWeight.Bold)
-        OutlinedTextField(
-            toUsername,
-            { toUsername = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Friend username") }
-        )
+    fun refreshMessages() {
+        if (conversationId.isBlank()) return
+        Executors.newSingleThreadExecutor().execute {
+            val response = api.chat(
+                "list",
+                bearer = token,
+                query = mapOf("conversation_id" to conversationId)
+            )
+            Handler(Looper.getMainLooper()).post {
+                val array = response.optJSONArray("messages")
+                transcript = array
+                if (response.has("error")) status = apiFriendlyError(response, "Could not load messages.")
+            }
+        }
+    }
 
-        Card(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp)
-        ) {
+    LaunchedEffect(Unit) {
+        Executors.newSingleThreadExecutor().execute {
+            val profile = api.profile(token)
+            Handler(Looper.getMainLooper()).post {
+                currentUserId = profile.optString("id")
+            }
+        }
+    }
+
+    LaunchedEffect(conversationId) {
+        if (conversationId.isBlank()) return@LaunchedEffect
+        while (true) {
+            refreshMessages()
+            delay(5000)
+        }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Chat", fontSize = 31.sp, fontWeight = FontWeight.ExtraBold)
             Text(
-                transcript,
-                Modifier
-                    .padding(16.dp)
-                    .verticalScroll(rememberScrollState())
+                "Simple, private one-to-one messaging through the WakeWay backend.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                message,
-                { message = it },
-                modifier = Modifier.weight(1f),
-                label = { Text("Message") },
-                singleLine = true
-            )
-            Button(onClick = {
-                if (message.isBlank()) return@Button
-                loading = true
-                Executors.newSingleThreadExecutor().execute {
-                    val body = JSONObject().put("message", message)
-                    if (conversationId.isBlank()) body.put("to_username", toUsername)
-                    else body.put("conversation_id", conversationId)
-                    val response = api.chat("send", body, token)
-                    Handler(Looper.getMainLooper()).post {
-                        conversationId = response.optString("conversation_id", conversationId)
-                        transcript = if (response.has("error")) response.optString("error") else {
-                            transcript + "\n\nYou: " + message
+        item {
+            Card(shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = toUsername,
+                        onValueChange = {
+                            toUsername = it.lowercase().replace(" ", "_")
+                            if (conversationId.isNotBlank()) {
+                                conversationId = ""
+                                transcript = null
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Friend username") },
+                        leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null) }
+                    )
+                    if (conversationId.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Conversation connected", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { refreshMessages() }) { Text("Refresh") }
                         }
-                        message = ""
-                        loading = false
                     }
                 }
-            }) {
-                if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Text("➤")
             }
         }
 
-        if (conversationId.isNotBlank()) {
-            OutlinedButton(onClick = {
-                Executors.newSingleThreadExecutor().execute {
-                    val response = api.chat(
-                        "list",
-                        bearer = token,
-                        query = mapOf("conversation_id" to conversationId)
-                    )
-                    val array = response.optJSONArray("messages")
-                    val text = buildString {
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                if (transcript == null || transcript?.length == 0) {
+                    Box(
+                        Modifier.fillMaxWidth().height(260.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.Chat, contentDescription = null, modifier = Modifier.size(42.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text(status, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                } else {
+                    Column(
+                        Modifier.padding(14.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val array = transcript
                         if (array != null) {
                             for (i in 0 until array.length()) {
-                                val item = array.optJSONObject(i) ?: continue
-                                append(item.optString("sender_id"))
-                                append(": ")
-                                append(item.optString("body"))
-                                append("\n")
+                                val row = array.optJSONObject(i) ?: continue
+                                val mine = row.optString("sender_id") == currentUserId
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start
+                                ) {
+                                    Surface(
+                                        color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(
+                                            topStart = 16.dp,
+                                            topEnd = 16.dp,
+                                            bottomStart = if (mine) 16.dp else 4.dp,
+                                            bottomEnd = if (mine) 4.dp else 16.dp
+                                        )
+                                    ) {
+                                        Column(Modifier.padding(11.dp)) {
+                                            Text(row.optString("body"), fontSize = 14.sp)
+                                            Text(
+                                                row.optString("created_at"),
+                                                fontSize = 9.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(top = 3.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                    Handler(Looper.getMainLooper()).post {
-                        transcript = text.ifBlank { "No messages yet." }
-                    }
                 }
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("REFRESH MESSAGES")
             }
+        }
+
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                OutlinedTextField(
+                    value = message,
+                    onValueChange = { message = it },
+                    modifier = Modifier.weight(1f),
+                    minLines = 1,
+                    maxLines = 4,
+                    label = { Text("Message") }
+                )
+                Button(
+                    onClick = {
+                        if (message.isBlank()) return@Button
+                        if (conversationId.isBlank() && toUsername.isBlank()) {
+                            status = "Enter a friend username first."
+                            return@Button
+                        }
+                        loading = true
+                        val outgoing = message
+                        Executors.newSingleThreadExecutor().execute {
+                            val body = JSONObject().put("message", outgoing)
+                            if (conversationId.isBlank()) body.put("to_username", toUsername)
+                            else body.put("conversation_id", conversationId)
+                            val response = api.chat("send", body, token)
+                            Handler(Looper.getMainLooper()).post {
+                                loading = false
+                                if (response.has("error")) {
+                                    status = apiFriendlyError(response, "Message could not be sent.")
+                                } else {
+                                    conversationId = response.optString("conversation_id", conversationId)
+                                    message = ""
+                                    status = "Sent."
+                                    refreshMessages()
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.size(54.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("➤", fontSize = 20.sp)
+                }
+            }
+        }
+
+        if (status.isNotBlank()) {
+            item { ApiPlainCard(status) }
         }
     }
 }
