@@ -377,6 +377,7 @@ private fun WakeWayApp() {
 
                 Screen.ACTIVE -> ActiveScreen(
                     journey = journey,
+                    store = store,
                     onEnd = {
                         val stop = Intent(context, JourneyTrackingService::class.java).apply {
                             action = JourneyTrackingService.ACTION_STOP
@@ -1244,6 +1245,7 @@ private fun ToggleRow(
 @Composable
 private fun ActiveScreen(
     journey: Journey?,
+    store: LocalStore,
     onEnd: () -> Unit,
     onFamily: () -> Unit,
     onChat: () -> Unit
@@ -1251,87 +1253,189 @@ private fun ActiveScreen(
     if (journey == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("No active journey", fontWeight = FontWeight.Bold)
+                Icon(Icons.Outlined.Explore, contentDescription = null, modifier = Modifier.size(44.dp))
                 Spacer(Modifier.height(8.dp))
+                Text("No active journey", fontWeight = FontWeight.Bold)
                 Text("Create a destination alarm from Journey.")
             }
         }
         return
     }
 
+    var snapshot by remember(journey.id) { mutableStateOf(store.trackingSnapshot()) }
+
+    LaunchedEffect(journey.id) {
+        while (true) {
+            snapshot = store.trackingSnapshot()
+            delay(1000)
+        }
+    }
+
+    val distanceText = snapshot?.let {
+        val meters = it.optDouble("distance_m", Double.NaN)
+        when {
+            meters.isNaN() -> "Waiting for GPS…"
+            meters >= 1000 -> String.format(Locale.US, "%.2f km", meters / 1000.0)
+            else -> "${meters.toInt()} m"
+        }
+    } ?: "Waiting for GPS…"
+
+    val etaText = snapshot?.let {
+        val eta = it.optInt("eta_min", -1)
+        if (eta > 0) "≈ ${eta} min" else "Calculating"
+    } ?: "Calculating"
+
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            ElevatedCard(
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                shape = RoundedCornerShape(30.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
             ) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("JOURNEY MONITORING", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(journey.destination.name, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
-                    Text(journey.destination.address, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                        ) {
+                            Icon(
+                                Icons.Outlined.NotificationsActive,
+                                contentDescription = null,
+                                modifier = Modifier.padding(10.dp).size(24.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("JOURNEY ACTIVE", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                journey.destination.name,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        MetricCard("Distance", distanceText, Modifier.weight(1f))
+                        MetricCard("ETA", etaText, Modifier.weight(1f))
+                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusPill(journey.transport.emoji + " " + journey.transport.label, true)
-                        StatusPill("GPS armed", true)
+                        StatusPill(journey.transport.label, true)
+                        StatusPill(
+                            snapshot?.let { "GPS ±${it.optDouble("accuracy_m", 0.0).toInt()} m" } ?: "GPS waiting",
+                            snapshot != null
+                        )
                     }
                 }
             }
         }
 
         item {
-            Card(shape = RoundedCornerShape(22.dp)) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                    Text("Alert sequence", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.NotificationsActive, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Wake-up sequence", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
                     journey.alerts.forEach { rule ->
-                        val valueText = if (rule.trigger.name == "DISTANCE")
-                            (if (rule.value >= 1.0) String.format(Locale.US, "%.1f km", rule.value) else String.format(Locale.US, "%.0f m", rule.value * 1000.0))
-                        else String.format(Locale.US, "%.0f min after start", rule.value)
-                        AlertRow(valueText, rule.label, if (rule.trigger.name == "DISTANCE") "🔔" else "⏱️")
+                        val valueText = if (rule.trigger == AlertTrigger.DISTANCE) {
+                            if (rule.value >= 1.0)
+                                String.format(Locale.US, "%.1f km", rule.value)
+                            else
+                                String.format(Locale.US, "%.0f m", rule.value * 1000.0)
+                        } else {
+                            String.format(Locale.US, "%.0f min after start", rule.value)
+                        }
+                        AlertRow(
+                            valueText,
+                            rule.label,
+                            if (rule.trigger == AlertTrigger.DISTANCE) "DISTANCE" else "TIME"
+                        )
                     }
                 }
             }
         }
 
         item {
-            Card(shape = RoundedCornerShape(22.dp)) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Reliability tips", fontWeight = FontWeight.Bold)
-                    Text("Keep location enabled.", fontSize = 13.sp)
-                    Text("Keep the WakeWay foreground notification visible.", fontSize = 13.sp)
-                    Text("Remove battery restrictions for reliable long journeys on phones that apply them.", fontSize = 13.sp)
-                    Text("The destination alarm stays on-device; cloud sync is optional.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("Reliability", fontWeight = FontWeight.Bold)
+                    Text("Keep Location enabled and allow WakeWay to run as a foreground service.", fontSize = 13.sp)
+                    Text("For long journeys, remove battery restrictions if your phone applies them.", fontSize = 13.sp)
+                    Text("The alarm stays on-device even when cloud sync is unavailable.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onFamily, modifier = Modifier.weight(1f)) { Text("👨‍👩‍👧 Share") }
-                OutlinedButton(onClick = onChat, modifier = Modifier.weight(1f)) { Text("💬 Chat") }
+                OutlinedButton(onClick = onFamily, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.FamilyRestroom, contentDescription = null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("Family")
+                }
+                OutlinedButton(onClick = onChat, modifier = Modifier.weight(1f)) {
+                    Text("Chat")
+                }
             }
         }
 
         item {
-            Button(onClick = onEnd, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(18.dp)) {
-                Text("END JOURNEY")
+            Button(
+                onClick = onEnd,
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Text("END JOURNEY", fontWeight = FontWeight.Bold)
             }
         }
     }
 }
+
+@Composable
+private fun MetricCard(
+    label: String,
+    value: String,
+    modifier: Modifier
+) {
+    Card(modifier = modifier, shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.padding(14.dp)) {
+            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
 @Composable
 private fun AlertRow(distance: String, label: String, icon: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(icon, fontSize = 24.sp)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.primaryContainer
+        ) {
+            Icon(
+                if (icon == "DISTANCE") Icons.Outlined.Explore else Icons.Outlined.Schedule,
+                contentDescription = null,
+                modifier = Modifier.padding(8.dp).size(18.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(label, fontWeight = FontWeight.Bold)
             Text(distance, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text("Armed", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
     }
 }
 
