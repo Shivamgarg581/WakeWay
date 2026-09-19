@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -199,12 +200,22 @@ private fun WakeWayApp() {
             }
         }
         val intent = Intent(context, JourneyTrackingService::class.java)
-        if (Build.VERSION.SDK_INT >= 26) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                ContextCompat.startForegroundService(context, intent)
+            } else {
+                context.startService(intent)
+            }
+            screen = Screen.ACTIVE
+        } catch (error: Exception) {
+            store.clearActiveJourney()
+            journey = null
+            Toast.makeText(
+                context,
+                "WakeWay couldn't start journey tracking. Please enable Location and Notifications.",
+                Toast.LENGTH_LONG
+            ).show()
         }
-        screen = Screen.ACTIVE
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
