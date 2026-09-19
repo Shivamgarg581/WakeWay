@@ -15,8 +15,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     defaults:
       run:
         working-directory: backend
@@ -25,11 +25,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Skip when Cloudflare credentials are not configured
-        if: env.CF_TOKEN == '' || env.CF_ACCOUNT == ''
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
         run: echo "Backend deployment skipped — add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to GitHub repository secrets."
 
       - name: Setup Node
-        if: env.CF_TOKEN != '' && env.CF_ACCOUNT != ''
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         uses: actions/setup-node@v5
         with:
           node-version: "22"
@@ -37,46 +37,51 @@ jobs:
           cache-dependency-path: backend/package.json
 
       - name: Install dependencies
-        if: env.CF_TOKEN != '' && env.CF_ACCOUNT != ''
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: npm install
 
-      - name: Deploy Worker
-        if: env.CF_TOKEN != '' && env.CF_ACCOUNT != ''
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: backend
-          command: deploy
-
-      - name: Upload Worker secrets
-        if: env.CF_TOKEN != '' && env.CF_ACCOUNT != ''
-        shell: bash
+      - name: Prepare Worker secrets file
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           RAILRADAR_API_KEY: ${{ secrets.RAILRADAR_API_KEY }}
+        shell: bash
         run: |
-          set -euo pipefail
-          put_secret() {
-            local name="$1"
-            local value="$2"
-            if [ -n "$value" ]; then
-              printf '%s' "$value" | npx wrangler secret put "$name"
-            fi
-          }
-          put_secret SUPABASE_URL "$SUPABASE_URL"
-          put_secret SUPABASE_PUBLISHABLE_KEY "$SUPABASE_PUBLISHABLE_KEY"
-          put_secret SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
-          put_secret GEMINI_API_KEY "$GEMINI_API_KEY"
-          put_secret GEMINI_MODEL "$GEMINI_MODEL"
-          put_secret RAILRADAR_API_KEY "$RAILRADAR_API_KEY"
+          python3 - <<'PY'
+          import json
+          import os
+          names = [
+              "SUPABASE_URL",
+              "SUPABASE_PUBLISHABLE_KEY",
+              "SUPABASE_SERVICE_ROLE_KEY",
+              "GEMINI_API_KEY",
+              "GEMINI_MODEL",
+              "RAILRADAR_API_KEY",
+          ]
+          values = {name: os.environ.get(name, "") for name in names if os.environ.get(name, "")}
+          with open(".wakeway-secrets.json", "w", encoding="utf-8") as f:
+              json.dump(values, f)
+          PY
+          chmod 600 .wakeway-secrets.json
+
+      - name: Deploy Worker with secrets
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: backend
+          command: deploy --secrets-file .wakeway-secrets.json
+
+      - name: Remove temporary secrets file
+        if: always()
+        working-directory: backend
+        run: rm -f .wakeway-secrets.json
 
       - name: Done
-        if: env.CF_TOKEN != '' && env.CF_ACCOUNT != ''
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: echo "WakeWay backend deployment completed."
