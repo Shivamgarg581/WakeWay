@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -159,7 +160,7 @@ private fun WakeWayApp() {
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     val navigationStack = remember { mutableStateListOf(Screen.HOME) }
-    val screen: Screen get() = navigationStack.last()
+    val screen = navigationStack.lastOrNull() ?: Screen.HOME
     var journey by remember { mutableStateOf(store.activeJourney()) }
     var selectedDestination by remember { mutableStateOf<Destination?>(null) }
     var selectedTransport by remember { mutableStateOf(TransportMode.TRAIN) }
@@ -3026,13 +3027,13 @@ private fun ChatScreen(api: ApiClient, store: LocalStore) {
                 modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
                 shape = RoundedCornerShape(24.dp)
             ) {
-                if (transcript == null || transcript?.length == 0) {
+                if (transcript == null || transcript?.length() == 0) {
                     Box(
                         Modifier.fillMaxWidth().height(260.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.Chat, contentDescription = null, modifier = Modifier.size(42.dp))
+                            Icon(Icons.Outlined.Forum, contentDescription = null, modifier = Modifier.size(42.dp))
                             Spacer(Modifier.height(8.dp))
                             Text(status, fontWeight = FontWeight.Medium)
                         }
