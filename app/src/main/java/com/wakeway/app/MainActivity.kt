@@ -3033,7 +3033,7 @@ private fun ChatScreen(api: ApiClient, store: LocalStore) {
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.Forum, contentDescription = null, modifier = Modifier.size(42.dp))
+                            Icon(Icons.Outlined.Person, contentDescription = null, modifier = Modifier.size(42.dp))
                             Spacer(Modifier.height(8.dp))
                             Text(status, fontWeight = FontWeight.Medium)
                         }
