@@ -113,6 +113,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1536,6 +1537,7 @@ private fun AlertRow(distance: String, label: String, icon: String) {
 
 @Composable
 private fun HistoryScreen(history: List<Journey>) {
+    val locale = LocalLocale.current.platformLocale
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
         contentPadding = PaddingValues(top = 14.dp, bottom = 28.dp),
@@ -1581,7 +1583,7 @@ private fun HistoryScreen(history: List<Journey>) {
                             StatusPill(item.status.name.lowercase().replaceFirstChar { it.uppercase() }, item.status == JourneyStatus.COMPLETED)
                         }
                         Text(
-                            SimpleDateFormat("dd MMM • hh:mm a", Locale.getDefault()).format(Date(item.startedAt)),
+                            SimpleDateFormat("dd MMM • hh:mm a", locale).format(Date(item.startedAt)),
                             fontSize = 12.sp
                         )
                     }
