@@ -20,6 +20,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -129,7 +130,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 private enum class Screen {
-    HOME, SETUP, ACTIVE, HISTORY, EXPLORE, TRAIN, WEATHER, AI, FAMILY, FRIENDS, CHAT, ACCOUNT, SETTINGS, PREMIUM, MAP, SAVED_PLACES
+    HOME, SETUP, ACTIVE, HISTORY, EXPLORE, TRAIN, RAIL_EXTRAS, WEATHER, AI, FAMILY, FRIENDS, CHAT, ACCOUNT, SETTINGS, PREMIUM, MAP, SAVED_PLACES
 }
 
 class MainActivity : ComponentActivity() {
@@ -316,6 +317,7 @@ private fun WakeWayApp() {
                             Screen.HISTORY -> "Journey history"
                             Screen.EXPLORE -> "Explore"
                             Screen.TRAIN -> "Live trains"
+                            Screen.RAIL_EXTRAS -> "Rail extras"
                             Screen.WEATHER -> "Weather"
                             Screen.AI -> "WakeWay AI"
                             Screen.FAMILY -> "Family"
@@ -429,6 +431,7 @@ private fun WakeWayApp() {
                         onOpen = ::open
                     )
                     Screen.TRAIN -> TrainScreen(api)
+                    Screen.RAIL_EXTRAS -> RailExtrasScreen(api)
                     Screen.WEATHER -> WeatherScreen(api, selectedDestination)
                     Screen.AI -> AiScreen(api)
                     Screen.FAMILY -> FamilyScreen(api, store)
@@ -1661,6 +1664,18 @@ private fun ExploreScreen(
             }
         }
 
+        item { SectionTitle("Rail extras") }
+        item {
+            FeatureCard(
+                Icons.Outlined.DirectionsRailway,
+                "Fare & PNR",
+                "Advanced rail tools",
+                Modifier.fillMaxWidth()
+            ) {
+                onOpen(Screen.RAIL_EXTRAS)
+            }
+        }
+
         item { SectionTitle("Your places") }
         item {
             FeatureCard(Icons.Outlined.LocationOn, "Saved places", "Quick destinations", Modifier.fillMaxWidth()) {
@@ -1933,6 +1948,154 @@ private fun TrainScreen(api: ApiClient) {
                     Text("Free sandbox quota: 1,000 requests/month.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RailExtrasScreen(api: ApiClient) {
+    var tab by remember { mutableIntStateOf(0) }
+    var train by remember { mutableStateOf("") }
+    var from by remember { mutableStateOf("") }
+    var to by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())) }
+    var pnr by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf<JSONObject?>(null) }
+    var message by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+
+    fun run(request: () -> JSONObject) {
+        loading = true
+        message = ""
+        Executors.newSingleThreadExecutor().execute {
+            val response = request()
+            Handler(Looper.getMainLooper()).post {
+                loading = false
+                result = response
+                if (response.has("error")) {
+                    message = apiFriendlyError(response, "Rail service returned an error.")
+                }
+            }
+        }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 14.dp, bottom = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Text("Rail extras", fontSize = 31.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                "Fare, PNR prediction and refund information.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf("Fare", "PNR prediction", "PNR refund").forEachIndexed { index, label ->
+                    FilterChip(
+                        selected = tab == index,
+                        onClick = {
+                            tab = index
+                            result = null
+                            message = ""
+                        },
+                        label = { Text(label, fontSize = 11.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        item {
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (tab == 0) {
+                        OutlinedTextField(
+                            value = train,
+                            onValueChange = { train = it.filter(Char::isDigit).take(5) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("5-digit train number") }
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = from,
+                                onValueChange = { from = it.uppercase(Locale.US).take(5) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                label = { Text("From") }
+                            )
+                            OutlinedTextField(
+                                value = to,
+                                onValueChange = { to = it.uppercase(Locale.US).take(5) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                label = { Text("To") }
+                            )
+                        }
+                        OutlinedTextField(
+                            value = date,
+                            onValueChange = { date = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Journey date (YYYY-MM-DD)") }
+                        )
+                        Button(
+                            onClick = {
+                                if (train.length != 5 || from.isBlank() || to.isBlank()) {
+                                    message = "Enter a train number and both station codes."
+                                    return@Button
+                                }
+                                run { api.trainFare(train, from, to, date) }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(50.dp)
+                        ) {
+                            if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text("GET FARE")
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = pnr,
+                            onValueChange = { pnr = it.filter(Char::isDigit).take(10) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("10-digit PNR") }
+                        )
+                        Text(
+                            if (tab == 1)
+                                "Check the documented PNR confirmation prediction service."
+                            else
+                                "Check documented refund information for a PNR.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = {
+                                if (pnr.length != 10) {
+                                    message = "Enter a valid 10-digit PNR."
+                                    return@Button
+                                }
+                                run {
+                                    if (tab == 1) api.pnrPrediction(pnr) else api.pnrRefund(pnr)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(50.dp)
+                        ) {
+                            if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text(if (tab == 1) "CHECK PREDICTION" else "CHECK REFUND")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (message.isNotBlank()) item { ApiPlainCard(message) }
+        result?.let { response ->
+            item { ApiResultCard(response) }
         }
     }
 }
