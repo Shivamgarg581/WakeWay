@@ -20,6 +20,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
@@ -105,6 +110,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -468,6 +474,17 @@ private fun HomeScreen(
     onActive: () -> Unit,
     onOpen: (Screen) -> Unit
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "home_pulse")
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "hero_pulse"
+    )
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -566,7 +583,13 @@ private fun HomeScreen(
                                 Icons.Outlined.LocationOn,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(12.dp).size(28.dp)
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .size(28.dp)
+                                    .graphicsLayer {
+                                        scaleX = pulse
+                                        scaleY = pulse
+                                    }
                             )
                         }
                     }
