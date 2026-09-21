@@ -15,6 +15,11 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -58,7 +63,6 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarOutline
-import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -96,6 +100,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -146,13 +151,27 @@ private fun WakeWayApp() {
     val executor = remember { Executors.newCachedThreadPool() }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
-    var screen by remember { mutableStateOf(Screen.HOME) }
+    val navigationStack = remember { mutableStateListOf(Screen.HOME) }
+    val screen: Screen get() = navigationStack.last()
     var journey by remember { mutableStateOf(store.activeJourney()) }
     var selectedDestination by remember { mutableStateOf<Destination?>(null) }
     var selectedTransport by remember { mutableStateOf(TransportMode.TRAIN) }
     var backendOnline by remember { mutableStateOf(false) }
     var backendMessage by remember { mutableStateOf("Checking services…") }
     var darkMode by remember { mutableStateOf(store.setting("dark", "false") == "true") }
+
+    fun navigateTo(newScreen: Screen) {
+        if (navigationStack.lastOrNull() != newScreen) navigationStack.add(newScreen)
+    }
+
+    fun resetTo(newScreen: Screen) {
+        navigationStack.clear()
+        navigationStack.add(newScreen)
+    }
+
+    fun goBack() {
+        if (navigationStack.size > 1) navigationStack.removeAt(navigationStack.lastIndex)
+    }
 
     LaunchedEffect(api.backendUrl()) {
         executor.execute {
@@ -280,70 +299,60 @@ private fun WakeWayApp() {
     Scaffold(
         topBar = {
             Surface(
-                color = MaterialTheme.colorScheme.background,
-                tonalElevation = 0.dp
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 18.dp, vertical = 11.dp)
                 ) {
-                    IconButton(
-                        onClick = {
-                            if (screen == Screen.HOME) {
-                                screen = Screen.SETTINGS
-                            } else {
-                                screen = Screen.HOME
-                            }
-                        }
-                    ) {
-                        Icon(
-                            if (screen == Screen.HOME) Icons.Outlined.Settings else Icons.Outlined.ArrowBack,
-                            contentDescription = if (screen == Screen.HOME) "Settings" else "Back",
-                            modifier = if (screen == Screen.HOME) Modifier else Modifier.size(24.dp)
-                        )
-                    }
-                    Column(Modifier.weight(1f)) {
+                    Text(
+                        AnimatedContent(
+                targetState = screen,
+                transitionSpec = {
+                    (fadeIn() + slideInHorizontally(initialOffsetX = { it / 5 })) togetherWith
+                        (fadeOut() + slideOutHorizontally(targetOffsetX = { -it / 5 }))
+                },
+                label = "screen_transition"
+            ) { targetScreen ->
+                when (targetScreen) {
+
+                            Screen.HOME -> "WakeWay"
+                            Screen.SETUP -> "Set your destination"
+                            Screen.ACTIVE -> "Journey in progress"
+                            Screen.HISTORY -> "Journey history"
+                            Screen.EXPLORE -> "Explore"
+                            Screen.TRAIN -> "Live trains"
+                            Screen.RAIL_EXTRAS -> "Rail extras"
+                            Screen.WEATHER -> "Weather"
+                            Screen.AI -> "WakeWay AI"
+                            Screen.FAMILY -> "Family"
+                            Screen.FRIENDS -> "Friends"
+                            Screen.CHAT -> "Chat"
+                            Screen.ACCOUNT -> "Account"
+                            Screen.SETTINGS -> "Settings"
+                            Screen.PREMIUM -> "Premium"
+                            Screen.MAP -> "Destination map"
+                            Screen.SAVED_PLACES -> "Saved places"
+                        },
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = if (screen == Screen.HOME) 24.sp else 21.sp
+                    )
+                    if (screen == Screen.HOME) {
                         Text(
-                            when (screen) {
-                                Screen.HOME -> "Good to have you here"
-                                Screen.SETUP -> "Set a destination"
-                                Screen.ACTIVE -> "Journey in progress"
-                                Screen.HISTORY -> "Journey history"
-                                Screen.EXPLORE -> "Travel tools"
-                                Screen.TRAIN -> "Live trains"
-                                Screen.WEATHER -> "Weather"
-                                Screen.AI -> "WakeWay AI"
-                                Screen.FAMILY -> "Family"
-                                Screen.FRIENDS -> "Friends"
-                                Screen.CHAT -> "Chat"
-                                Screen.ACCOUNT -> "Account"
-                                Screen.SETTINGS -> "Settings"
-                                Screen.PREMIUM -> "Premium"
-                                Screen.MAP -> "Destination map"
-                                Screen.SAVED_PLACES -> "Saved places"
-                            },
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                            "Never miss your stop.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (screen == Screen.HOME) {
-                            Text(
-                                "Your stop is the only thing you need to remember.",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
                 }
-            }
-        },
-        bottomBar = {
-            NavigationBar(
+                
+                
+                r = {
+                gationBar(
                 containerColor = MaterialTheme.colorScheme.surface
-            ) {
+                
                 NavigationBarItem(
                     selected = screen == Screen.HOME,
                     onClick = { screen = Screen.HOME },
@@ -374,15 +383,15 @@ private fun WakeWayApp() {
                     icon = { Icon(Icons.Outlined.Settings, contentDescription = "Settings") },
                     label = { Text("Settings") }
                 )
-            }
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
+                
+                
+                ->
+                
+                fier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-        ) {
-            when (screen) {
+                
+                 (screen) {
                 Screen.HOME -> HomeScreen(
                     journey = journey,
                     backendOnline = backendOnline,
@@ -452,6 +461,8 @@ private fun WakeWayApp() {
                     screen = Screen.SETUP
                 }
                 Screen.MAP -> MapScreen(selectedDestination)
+
+                }
             }
         }
     }
