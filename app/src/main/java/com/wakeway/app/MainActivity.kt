@@ -187,12 +187,8 @@ private fun WakeWayApp() {
         }
     }
 
-    fun open(newScreen: Screen) {
-        screen = newScreen
-    }
-
-    BackHandler(enabled = screen != Screen.HOME) {
-        screen = Screen.HOME
+    BackHandler(enabled = navigationStack.size > 1) {
+        goBack()
     }
 
     val locationPermissions = buildList {
@@ -222,6 +218,7 @@ private fun WakeWayApp() {
                 api.sendJourney(body, token)
             }
         }
+
         val intent = Intent(context, JourneyTrackingService::class.java)
         try {
             if (Build.VERSION.SDK_INT >= 26) {
@@ -229,13 +226,13 @@ private fun WakeWayApp() {
             } else {
                 context.startService(intent)
             }
-            screen = Screen.ACTIVE
+            navigateTo(Screen.ACTIVE)
         } catch (error: Exception) {
             store.clearActiveJourney()
             journey = null
             Toast.makeText(
                 context,
-                "WakeWay couldn't start journey tracking. Please enable Location and Notifications.",
+                "WakeWay couldn't start journey tracking. Enable Location and Notifications first.",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -249,7 +246,7 @@ private fun WakeWayApp() {
             result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         val notificationGranted =
             Build.VERSION.SDK_INT < 33 ||
-            result[Manifest.permission.POST_NOTIFICATIONS] == true
+                result[Manifest.permission.POST_NOTIFICATIONS] == true
 
         val pending = pendingJourney
         pendingJourney = null
@@ -273,6 +270,7 @@ private fun WakeWayApp() {
         }.getOrDefault(false)
 
         if (!locationEnabled) {
+            pendingJourney = j
             Toast.makeText(
                 context,
                 "Turn on Location first so WakeWay can monitor your journey.",
@@ -281,7 +279,6 @@ private fun WakeWayApp() {
             runCatching {
                 context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             }
-            pendingJourney = j
             return
         }
 
@@ -296,6 +293,10 @@ private fun WakeWayApp() {
         }
     }
 
+    fun open(newScreen: Screen) {
+        navigateTo(newScreen)
+    }
+
     Scaffold(
         topBar = {
             Surface(
@@ -308,23 +309,13 @@ private fun WakeWayApp() {
                         .padding(horizontal = 18.dp, vertical = 11.dp)
                 ) {
                     Text(
-                        AnimatedContent(
-                targetState = screen,
-                transitionSpec = {
-                    (fadeIn() + slideInHorizontally(initialOffsetX = { it / 5 })) togetherWith
-                        (fadeOut() + slideOutHorizontally(targetOffsetX = { -it / 5 }))
-                },
-                label = "screen_transition"
-            ) { targetScreen ->
-                when (targetScreen) {
-
+                        text = when (screen) {
                             Screen.HOME -> "WakeWay"
                             Screen.SETUP -> "Set your destination"
                             Screen.ACTIVE -> "Journey in progress"
                             Screen.HISTORY -> "Journey history"
                             Screen.EXPLORE -> "Explore"
                             Screen.TRAIN -> "Live trains"
-                            Screen.RAIL_EXTRAS -> "Rail extras"
                             Screen.WEATHER -> "Weather"
                             Screen.AI -> "WakeWay AI"
                             Screen.FAMILY -> "Family"
@@ -347,121 +338,118 @@ private fun WakeWayApp() {
                         )
                     }
                 }
-                
-                
-                r = {
-                gationBar(
-                containerColor = MaterialTheme.colorScheme.surface
-                
+            }
+        },
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 NavigationBarItem(
                     selected = screen == Screen.HOME,
-                    onClick = { screen = Screen.HOME },
+                    onClick = { resetTo(Screen.HOME) },
                     icon = { Icon(Icons.Outlined.Home, contentDescription = "Home") },
                     label = { Text("Home") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.ACTIVE || screen == Screen.SETUP,
-                    onClick = { screen = if (journey != null) Screen.ACTIVE else Screen.SETUP },
+                    onClick = { resetTo(if (journey != null) Screen.ACTIVE else Screen.SETUP) },
                     icon = { Icon(Icons.Outlined.Explore, contentDescription = "Journey") },
                     label = { Text("Journey") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.HISTORY,
-                    onClick = { screen = Screen.HISTORY },
+                    onClick = { resetTo(Screen.HISTORY) },
                     icon = { Icon(Icons.Outlined.History, contentDescription = "History") },
                     label = { Text("History") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.EXPLORE,
-                    onClick = { screen = Screen.EXPLORE },
+                    onClick = { resetTo(Screen.EXPLORE) },
                     icon = { Icon(Icons.Outlined.Map, contentDescription = "Explore") },
                     label = { Text("Explore") }
                 )
                 NavigationBarItem(
                     selected = screen == Screen.SETTINGS,
-                    onClick = { screen = Screen.SETTINGS },
+                    onClick = { resetTo(Screen.SETTINGS) },
                     icon = { Icon(Icons.Outlined.Settings, contentDescription = "Settings") },
                     label = { Text("Settings") }
                 )
-                
-                
-                ->
-                
-                fier = Modifier
+            }
+        }
+    ) { padding ->
+        Box(
+            modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                
-                 (screen) {
-                Screen.HOME -> HomeScreen(
-                    journey = journey,
-                    backendOnline = backendOnline,
-                    backendMessage = backendMessage,
-                    onStart = { screen = Screen.SETUP },
-                    onActive = { screen = Screen.ACTIVE },
-                    onOpen = ::open
-                )
-
-                Screen.SETUP -> SetupScreen(
-                    initialDestination = selectedDestination,
-                    initialTransport = selectedTransport,
-                    api = api,
-                    store = store,
-                    onDestination = { selectedDestination = it },
-                    onTransport = { selectedTransport = it },
-                    onMap = { screen = Screen.MAP },
-                    onStart = { destination, transport, alerts ->
-                        beginJourney(LocalStore.newJourney(destination, transport, alerts))
-                    }
-                )
-
-                Screen.ACTIVE -> ActiveScreen(
-                    journey = journey,
-                    store = store,
-                    onEnd = {
-                        val stop = Intent(context, JourneyTrackingService::class.java).apply {
-                            action = JourneyTrackingService.ACTION_STOP
+        ) {
+            AnimatedContent(
+                targetState = screen,
+                transitionSpec = {
+                    (fadeIn() + slideInHorizontally(initialOffsetX = { it / 5 })) togetherWith
+                        (fadeOut() + slideOutHorizontally(targetOffsetX = { -it / 5 }))
+                },
+                label = "screen_transition"
+            ) { targetScreen ->
+                when (targetScreen) {
+                    Screen.HOME -> HomeScreen(
+                        journey = journey,
+                        backendOnline = backendOnline,
+                        backendMessage = backendMessage,
+                        onStart = { navigateTo(Screen.SETUP) },
+                        onActive = { navigateTo(Screen.ACTIVE) },
+                        onOpen = ::open
+                    )
+                    Screen.SETUP -> SetupScreen(
+                        initialDestination = selectedDestination,
+                        initialTransport = selectedTransport,
+                        api = api,
+                        store = store,
+                        onDestination = { selectedDestination = it },
+                        onTransport = { selectedTransport = it },
+                        onMap = { navigateTo(Screen.MAP) },
+                        onStart = { destination, transport, alerts ->
+                            beginJourney(LocalStore.newJourney(destination, transport, alerts))
                         }
-                        context.startService(stop)
-                        journey = null
-                        screen = Screen.HOME
-                    },
-                    onFamily = { screen = Screen.FAMILY },
-                    onChat = { screen = Screen.CHAT }
-                )
-
-                Screen.HISTORY -> HistoryScreen(store.history())
-
-                Screen.EXPLORE -> ExploreScreen(
-                    backendOnline = backendOnline,
-                    onOpen = ::open
-                )
-
-                Screen.TRAIN -> TrainScreen(api)
-                Screen.WEATHER -> WeatherScreen(api, selectedDestination)
-                Screen.AI -> AiScreen(api)
-                Screen.FAMILY -> FamilyScreen(api, store)
-                Screen.FRIENDS -> FriendsScreen(api, store)
-                Screen.CHAT -> ChatScreen(api, store)
-
-                Screen.ACCOUNT -> AccountScreen(
-                    api = api,
-                    store = store,
-                    onProfileUpdated = { }
-                )
-
-                Screen.SETTINGS -> SettingsScreen(
-                    api = api,
-                    store = store,
-                    onAccount = { screen = Screen.ACCOUNT }
-                )
-
-                Screen.PREMIUM -> PremiumScreen(api, store)
-                Screen.SAVED_PLACES -> SavedPlacesScreen(api, store) { destination ->
-                    selectedDestination = destination
-                    screen = Screen.SETUP
-                }
-                Screen.MAP -> MapScreen(selectedDestination)
-
+                    )
+                    Screen.ACTIVE -> ActiveScreen(
+                        journey = journey,
+                        store = store,
+                        onEnd = {
+                            val stop = Intent(context, JourneyTrackingService::class.java).apply {
+                                action = JourneyTrackingService.ACTION_STOP
+                            }
+                            runCatching { context.startService(stop) }
+                            journey = null
+                            resetTo(Screen.HOME)
+                        },
+                        onFamily = { navigateTo(Screen.FAMILY) },
+                        onChat = { navigateTo(Screen.CHAT) }
+                    )
+                    Screen.HISTORY -> HistoryScreen(store.history())
+                    Screen.EXPLORE -> ExploreScreen(
+                        backendOnline = backendOnline,
+                        onOpen = ::open
+                    )
+                    Screen.TRAIN -> TrainScreen(api)
+                    Screen.WEATHER -> WeatherScreen(api, selectedDestination)
+                    Screen.AI -> AiScreen(api)
+                    Screen.FAMILY -> FamilyScreen(api, store)
+                    Screen.FRIENDS -> FriendsScreen(api, store)
+                    Screen.CHAT -> ChatScreen(api, store)
+                    Screen.ACCOUNT -> AccountScreen(
+                        api = api,
+                        store = store,
+                        onProfileUpdated = { }
+                    )
+                    Screen.SETTINGS -> SettingsScreen(
+                        api = api,
+                        store = store,
+                        onAccount = { navigateTo(Screen.ACCOUNT) }
+                    )
+                    Screen.PREMIUM -> PremiumScreen(api, store)
+                    Screen.SAVED_PLACES -> SavedPlacesScreen(api, store) { destination ->
+                        selectedDestination = destination
+                        navigateTo(Screen.SETUP)
+                    }
+                    Screen.MAP -> MapScreen(selectedDestination)
                 }
             }
         }
