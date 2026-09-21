@@ -59,6 +59,12 @@ jobs:
         with:
           gradle-version: "9.4.1"
 
+      - name: Unit tests
+        run: gradle --no-daemon testDebugUnitTest
+
+      - name: Lint debug
+        run: gradle --no-daemon lintDebug
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
